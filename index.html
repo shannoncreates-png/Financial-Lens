@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Financial Lens — Verified Financial Data</title>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<!-- Tailwind -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- React + Recharts + Babel -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script>
+  // Force classic JSX runtime (React.createElement) — the default 'react' preset
+  // emits ESM `import` from react/jsx-runtime, which fails in a non-module script.
+  Babel.registerPreset('react-classic', { presets: [[Babel.availablePresets['react'], { runtime: 'classic' }]] });
+</script>
+
+<style>
+  :root {
+    --bg: #080C14;
+    --card: #0D1421;
+    --border: #1E2D45;
+    --elevated: #111827;
+    --accent: #3B82F6;
+    --accent2: #8B5CF6;
+    --accent3: #06B6D4;
+    --up: #10B981;
+    --down: #F43F5E;
+    --warn: #F59E0B;
+    --t-primary: #F1F5F9;
+    --t-secondary: #94A3B8;
+    --t-muted: #475569;
+    --mono: #E2E8F0;
+  }
+  html, body { background: var(--bg); color: var(--t-primary); margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; color: var(--mono); }
+  .ticker { font-family: 'JetBrains Mono', monospace; text-transform: uppercase; color: var(--accent); }
+  .glow-price { text-shadow: 0 0 20px rgba(59,130,246,0.45); }
+  .glow-metric { filter: drop-shadow(0 0 8px rgba(59,130,246,0.3)); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+  .card-elevated {
+    background: linear-gradient(135deg, #0D1421 0%, #0F1E35 100%);
+    border: 1px solid #2563EB33; border-radius: 12px;
+    box-shadow: 0 0 24px rgba(37,99,235,0.08);
+  }
+  .card-glass {
+    background: rgba(13,20,33,0.8); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.06); border-radius: 12px;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #080C14; }
+  ::-webkit-scrollbar-thumb { background: #1E2D45; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a3d5c; }
+  .search-input {
+    background: #0D1421; border: 1px solid #1E2D45; border-radius: 12px;
+    color: #F1F5F9; font-size: 18px; padding: 16px 20px; width: 100%; outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .search-input:focus { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+  .pill {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px 12px;
+    border-radius: 999px; border: 1px solid var(--border); color: var(--t-secondary);
+    cursor: pointer; background: transparent; transition: all .12s;
+  }
+  .pill:hover { border-color: var(--accent); color: var(--t-primary); }
+  .pill-active { background: rgba(59,130,246,0.15); border-color: var(--accent); color: #fff; }
+  .info-wrap { position: relative; display: inline-flex; }
+  .info-pop {
+    position: absolute; z-index: 50; bottom: 130%; left: 50%; transform: translateX(-50%);
+    width: 240px; background: #0D1421; border: 1px solid #1E2D45; border-radius: 8px;
+    padding: 10px 12px; font-size: 12px; color: #94A3B8; line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5); pointer-events: none;
+  }
+  .fade-in { animation: fadeIn .4s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none; } }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  table { border-collapse: collapse; width: 100%; }
+  a { color: var(--accent3); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react-classic">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+const {
+  ResponsiveContainer, AreaChart, Area, LineChart, Line, BarChart, Bar, ComposedChart,
+  PieChart, Pie, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine
+} = Recharts;
+
+/* ============================ CONSTANTS ============================ */
+const C = {
+  bg:'#080C14', card:'#0D1421', border:'#1E2D45', elevated:'#111827',
+  accent:'#3B82F6', accent2:'#8B5CF6', accent3:'#06B6D4',
+  up:'#10B981', down:'#F43F5E', warn:'#F59E0B',
+  tPri:'#F1F5F9', tSec:'#94A3B8', tMut:'#475569', mono:'#E2E8F0',
+};
+const PIE_COLORS = ['#3B82F6','#8B5CF6','#06B6D4','#10B981','#F59E0B','#F43F5E','#7C3AED','#0EA5E9'];
+const MODEL = 'claude-sonnet-4-6';
+
+const AXIS = { stroke: C.tMut, tick:{ fill: C.tSec, fontSize: 12 } };
+const GRID = { strokeDasharray:'3 3', stroke: C.border };
+const TIP_STYLE = { contentStyle:{ background:C.card, border:'1px solid '+C.border, borderRadius:'8px', color:C.tPri, fontSize:12 }, labelStyle:{ color:C.tSec } };
+
+const METRIC_TOOLTIPS = {
+  'P/E (TTM)': 'Price-to-Earnings ratio. How much investors pay per $1 of earnings. Formula: Share Price ÷ Earnings Per Share (TTM).',
+  'PEG': 'Price/Earnings-to-Growth. P/E divided by earnings growth rate. Formula: P/E ÷ EPS Growth %.',
+  'P/S': 'Price-to-Sales. Market value per $1 of revenue. Formula: Market Cap ÷ Revenue.',
+  'P/B': 'Price-to-Book. Market value per $1 of book equity. Formula: Market Cap ÷ Shareholder Equity.',
+  'P/FCF': 'Price-to-Free-Cash-Flow. Market value per $1 of free cash flow. Formula: Market Cap ÷ Free Cash Flow.',
+  'EV/EBITDA': 'Enterprise Value to EBITDA. Capital-structure-neutral valuation. Formula: EV ÷ EBITDA.',
+  'EV/Revenue': 'Enterprise Value to Revenue. Formula: Enterprise Value ÷ Revenue.',
+  'EBITDA Margin': 'EBITDA as a percentage of revenue. Formula: EBITDA ÷ Revenue.',
+  'Dividend Yield': 'Annual dividend as a percentage of share price. Formula: Annual Dividend ÷ Share Price.',
+  'ROE': 'Return on Equity. Net income per $1 of shareholder equity. Formula: Net Income ÷ Shareholder Equity.',
+  'ROA': 'Return on Assets. Net income per $1 of total assets. Formula: Net Income ÷ Total Assets.',
+  'ROIC': 'Return on Invested Capital. After-tax operating profit per $1 of invested capital.',
+  'Interest Coverage': 'How many times operating income covers interest expense. Formula: Operating Income ÷ Interest Expense.',
+  'Effective Tax Rate': 'Income tax as a percentage of pre-tax income. Formula: Income Tax Expense ÷ Pre-Tax Income.',
+};
+
+/* ============================ FORMAT HELPERS ============================ */
+const num = (x) => {
+  if (x === null || x === undefined || x === '' || x === 'None' || x === '-') return null;
+  const n = typeof x === 'number' ? x : parseFloat(String(x).replace(/[$,%]/g,''));
+  return isNaN(n) ? null : n;
+};
+function fmtAbbr(n, prefix='') {
+  n = num(n); if (n === null) return '—';
+  const a = Math.abs(n), sign = n < 0 ? '-' : '';
+  if (a >= 1e12) return sign+prefix+(a/1e12).toFixed(2)+'T';
+  if (a >= 1e9)  return sign+prefix+(a/1e9).toFixed(2)+'B';
+  if (a >= 1e6)  return sign+prefix+(a/1e6).toFixed(2)+'M';
+  if (a >= 1e3)  return sign+prefix+(a/1e3).toFixed(2)+'K';
+  return sign+prefix+a.toFixed(2);
+}
+const fmt$ = (n) => fmtAbbr(n, '$');
+function fmtMoney(n, d=2) { n = num(n); return n === null ? '—' : '$'+n.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fmtPct(n, d=1) { n = num(n); if (n === null) return '—'; return n.toFixed(d)+'%'; }
+function fmtRatio(n, d=2) { n = num(n); return n === null ? '—' : n.toFixed(d); }
+function fmtInt(n) { n = num(n); return n === null ? '—' : Math.round(n).toLocaleString(); }
+function pct100(n, d=1) { n = num(n); if (n===null) return '—'; const v = Math.abs(n) <= 1 ? n*100 : n; return v.toFixed(d)+'%'; }
+
+/* ============================ STORAGE ============================ */
+const KEYS = {
+  get: () => ({
+    anthropic: localStorage.getItem('fl_anthropic') || '',
+    alphavantage: localStorage.getItem('fl_av') || '',
+    fmp: localStorage.getItem('fl_fmp') || '',
+  }),
+  set: (k, v) => localStorage.setItem({anthropic:'fl_anthropic', alphavantage:'fl_av', fmp:'fl_fmp'}[k], v),
+};
+
+/* ============================ CLAUDE ============================ */
+async function callClaude(system, userMsg, apiKey, maxTokens=16000) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'content-type':'application/json',
+      'x-api-key':apiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages:[{role:'user', content:userMsg}] }),
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error('Claude API '+res.status+': '+t.slice(0,300)); }
+  const j = await res.json();
+  return j.content.map(c => c.text || '').join('');
+}
+function extractJSON(text) {
+  let t = (text || '').trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  const s = t.indexOf('{'), e = t.lastIndexOf('}');
+  if (s >= 0 && e >= 0) t = t.slice(s, e+1);
+  return JSON.parse(t);
+}
+
+/* ============================ QUERY PARSE ============================ */
+const PARSE_SYS = `You are a financial data query parser. Return ONLY this JSON, no preamble or markdown:
+{
+  "mode": "single | comparison",
+  "companies": [
+    { "name": "full company name", "ticker": "ticker if known or inferrable, else null", "exchange": "NYSE | NASDAQ | other | unknown" }
+  ],
+  "queryConfidence": "high | medium | low",
+  "clarificationNeeded": true | false,
+  "clarificationPrompt": "string if needed, else null"
+}`;
+
+function localParse(query) {
+  const q = query.trim();
+  const m = q.split(/\s+(?:vs\.?|versus|compared? to|against)\s+/i);
+  const mk = (s) => {
+    s = s.trim();
+    const isTicker = /^[A-Za-z.\-]{1,5}$/.test(s) && s === s.toUpperCase();
+    return { name: s, ticker: isTicker ? s.toUpperCase() : null, exchange:'unknown' };
+  };
+  if (m.length === 2) return { mode:'comparison', companies:[mk(m[0]), mk(m[1])], queryConfidence:'medium', clarificationNeeded:false, clarificationPrompt:null };
+  return { mode:'single', companies:[mk(q)], queryConfidence:'medium', clarificationNeeded:false, clarificationPrompt:null };
+}
+async function parseQuery(query, anthropicKey) {
+  if (!anthropicKey) return localParse(query);
+  try {
+    const out = await callClaude(PARSE_SYS, 'Query: '+query, anthropicKey, 1024);
+    return extractJSON(out);
+  } catch (e) {
+    console.warn('parse fallback', e);
+    return localParse(query);
+  }
+}
+
+/* ============================ SEC EDGAR ============================ */
+let _tickerMap = null;
+async function getTickerMap() {
+  if (_tickerMap) return _tickerMap;
+  const r = await fetch('https://www.sec.gov/files/company_tickers.json');
+  if (!r.ok) throw new Error('SEC ticker map unavailable');
+  const j = await r.json();
+  _tickerMap = {};
+  Object.values(j).forEach(row => { _tickerMap[String(row.ticker).toUpperCase()] = { cik: row.cik_str, title: row.title }; });
+  return _tickerMap;
+}
+function pad10(cik) { return String(cik).padStart(10, '0'); }
+
+// Resolve a company name to a ticker via CORS-safe endpoints (FMP search / AV symbol search).
+async function resolveTicker(name, keys) {
+  if (keys.fmp) {
+    try {
+      const r = await fetch('https://financialmodelingprep.com/api/v3/search?query='+encodeURIComponent(name)+'&limit=1&apikey='+keys.fmp);
+      if (r.ok) { const j = await r.json(); if (Array.isArray(j) && j[0] && j[0].symbol) return j[0].symbol.toUpperCase(); }
+    } catch (e) {}
+  }
+  if (keys.alphavantage) {
+    try {
+      const r = await fetch('https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords='+encodeURIComponent(name)+'&apikey='+keys.alphavantage);
+      if (r.ok) { const j = await r.json(); const m = j.bestMatches && j.bestMatches[0]; if (m && m['1. symbol']) return m['1. symbol'].toUpperCase(); }
+    } catch (e) {}
+  }
+  return null;
+}
+
+function annualSeries(facts, names, units=['USD']) {
+  const ug = (facts.facts && facts.facts['us-gaap']) || {};
+  for (const name of names) {
+    const concept = ug[name];
+    if (!concept || !concept.units) continue;
+    let unitKey = units.find(u => concept.units[u]) || Object.keys(concept.units)[0];
+    const arr = concept.units[unitKey];
+    if (!arr) continue;
+    const annual = arr.filter(x => x.form === '10-K' && x.fp === 'FY' && x.fy);
+    const byFy = {};
+    annual.forEach(x => { if (!byFy[x.fy] || (x.end > byFy[x.fy].end)) byFy[x.fy] = x; });
+    const out = Object.values(byFy).sort((a,b) => a.fy - b.fy).slice(-5)
+      .map(x => ({ fy: x.fy, end: x.end, val: x.val }));
+    if (out.length) return out;
+  }
+  return [];
+}
+
+async function fetchSEC(company, cikHint) {
+  const result = { cik:null, meta:null, facts:null, filings:[], error:null };
+  try {
+    // CIK is resolved upstream from FMP/AV (CORS-safe). The SEC ticker map on
+    // www.sec.gov is CORS-blocked in-browser, so it is only a best-effort fallback.
+    let cik = cikHint || null;
+    if (!cik && company.ticker) {
+      try {
+        const map = await getTickerMap();
+        const tk = company.ticker.toUpperCase();
+        if (map[tk]) cik = map[tk].cik;
+      } catch (e) { /* CORS-blocked — ignore */ }
+    }
+    if (!cik) { result.error = 'CIK unresolved (provide an FMP or Alpha Vantage key)'; return result; }
+    result.cik = cik;
+    const padded = pad10(cik);
+
+    const subRes = await fetch('https://data.sec.gov/submissions/CIK'+padded+'.json');
+    if (subRes.ok) {
+      const sub = await subRes.json();
+      const f = sub.filings && sub.filings.recent;
+      const filings = [];
+      if (f) {
+        for (let i=0; i<f.form.length && filings.length<40; i++) {
+          if (['10-K','10-Q','8-K','DEF 14A','S-1'].includes(f.form[i])) {
+            const acc = f.accessionNumber[i].replace(/-/g,'');
+            filings.push({
+              type: f.form[i], date: f.filingDate[i],
+              description: f.primaryDocDescription?.[i] || f.form[i],
+              url: 'https://www.sec.gov/Archives/edgar/data/'+cik+'/'+acc+'/'+(f.primaryDocument?.[i]||''),
+            });
+          }
+        }
+      }
+      result.filings = filings.slice(0, 12);
+      result.meta = {
+        name: sub.name, sic: sub.sic, sicDescription: sub.sicDescription,
+        stateOfIncorporation: sub.stateOfIncorporation, fiscalYearEnd: sub.fiscalYearEnd,
+        exchanges: sub.exchanges, tickers: sub.tickers, ein: sub.ein,
+        website: sub.website || sub.investorWebsite || null,
+        addresses: sub.addresses, category: sub.category, cik,
+      };
+      if (sub.tickers && sub.tickers.length && !company.ticker) company.ticker = sub.tickers[0];
+    }
+    // NOTE: data.sec.gov/api/xbrl/companyfacts is CORS-blocked in-browser, so
+    // standardized XBRL facts cannot be fetched client-side. Financial line items
+    // are sourced from FMP instead; SEC supplies metadata, filings, and IR links.
+  } catch (e) { result.error = String(e.message || e); }
+  return result;
+}
+
+/* ============================ ALPHA VANTAGE ============================ */
+async function avFetch(fn, ticker, key) {
+  const url = 'https://www.alphavantage.co/query?function='+fn+'&symbol='+encodeURIComponent(ticker)+'&apikey='+key;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('AV '+fn+' '+r.status);
+  const j = await r.json();
+  if (j.Note || j.Information) throw new Error('AV rate limit');
+  return j;
+}
+async function fetchAlphaVantage(ticker, key) {
+  const out = { quote:null, overview:null, priceHistory:[], error:null };
+  if (!key || !ticker) { out.error = 'no key/ticker'; return out; }
+  try {
+    const [q, ov, ts] = await Promise.allSettled([
+      avFetch('GLOBAL_QUOTE', ticker, key),
+      avFetch('OVERVIEW', ticker, key),
+      avFetch('TIME_SERIES_MONTHLY_ADJUSTED', ticker, key),
+    ]);
+    if (q.status === 'fulfilled') out.quote = q.value['Global Quote'] || null;
+    if (ov.status === 'fulfilled' && ov.value.Symbol) out.overview = ov.value;
+    if (ts.status === 'fulfilled') {
+      const series = ts.value['Monthly Adjusted Time Series'] || {};
+      out.priceHistory = Object.entries(series)
+        .map(([date, v]) => ({ date, price: num(v['5. adjusted close']) }))
+        .filter(x => x.price !== null)
+        .sort((a,b) => a.date.localeCompare(b.date))
+        .slice(-60);
+    }
+  } catch (e) { out.error = String(e.message || e); }
+  return out;
+}
+
+/* ============================ FMP ============================ */
+async function fmpGet(path, key) {
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch('https://financialmodelingprep.com/api/v3/'+path+sep+'apikey='+key);
+  if (!r.ok) throw new Error('FMP '+r.status);
+  const j = await r.json();
+  if (j['Error Message']) throw new Error(j['Error Message']);
+  return j;
+}
+async function fetchFMP(ticker, key) {
+  const out = { profile:[], income:[], balance:[], cashflow:[], ratios:[], earnings:[], estimates:[], segProduct:null, segGeo:null, shares:[], calendar:[], error:null };
+  if (!key || !ticker) { out.error = 'no key/ticker'; return out; }
+  const tasks = {
+    profile: 'profile/'+ticker,
+    income: 'income-statement/'+ticker+'?limit=5',
+    balance: 'balance-sheet-statement/'+ticker+'?limit=5',
+    cashflow: 'cash-flow-statement/'+ticker+'?limit=5',
+    ratios: 'ratios/'+ticker+'?limit=5',
+    earnings: 'earnings-surprises/'+ticker,
+    estimates: 'analyst-estimates/'+ticker+'?limit=4',
+    shares: 'historical-shares-outstanding/'+ticker,
+    calendar: 'historical/earning_calendar/'+ticker+'?limit=4',
+  };
+  const entries = Object.entries(tasks);
+  const settled = await Promise.allSettled(entries.map(([_, p]) => fmpGet(p, key)));
+  settled.forEach((s, i) => { if (s.status === 'fulfilled') out[entries[i][0]] = s.value; });
+  // segmentation uses stable endpoint
+  try {
+    const sp = await fetch('https://financialmodelingprep.com/api/v4/revenue-product-segmentation?symbol='+ticker+'&structure=flat&apikey='+key);
+    if (sp.ok) out.segProduct = await sp.json();
+  } catch(e){}
+  try {
+    const sg = await fetch('https://financialmodelingprep.com/api/v4/revenue-geographic-segmentation?symbol='+ticker+'&structure=flat&apikey='+key);
+    if (sg.ok) out.segGeo = await sg.json();
+  } catch(e){}
+  if (settled.every(s => s.status === 'rejected')) out.error = 'FMP unavailable';
+  return out;
+}
+
+/* ============================ TRANSCRIPT (best effort) ============================ */
+async function fetchTranscript(ticker, key) {
+  // FMP earnings-call transcript (requires key, often paid). Best-effort, fail silent.
+  if (!key) return { available:false, text:null, link:'https://www.fool.com/earnings-call-transcripts/?symbol='+ticker };
+  try {
+    const r = await fetch('https://financialmodelingprep.com/api/v3/earning_call_transcript/'+ticker+'?limit=1&apikey='+key);
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j) && j[0] && j[0].content) {
+        return { available:true, date:j[0].date, quarter:'Q'+j[0].quarter+' '+j[0].year, text:String(j[0].content).slice(0, 14000) };
+      }
+    }
+  } catch (e) {}
+  return { available:false, text:null, link:'https://www.fool.com/earnings-call-transcripts/?symbol='+ticker };
+}
+
+/* ============================ SYNTHESIS ============================ */
+const SYNTH_SYS = `You are a financial data synthesizer. You have been given raw financial data from SEC EDGAR, Alpha Vantage, and Financial Modeling Prep about a public company.
+
+STRICT RULES — non-negotiable:
+1. NEVER provide investment advice, buy/sell recommendations, or price targets
+2. NEVER express opinion on whether the stock is attractive, overvalued, or a good investment
+3. ONLY report numbers present in the data provided — never estimate or infer figures
+4. If a data point is unavailable, return null — never substitute or approximate
+5. Always note the source and date/year of every figure
+6. Flag data quality issues: restated figures, fiscal year changes, one-time items
+7. Do not editorialize — describe what the data shows, not what it means
+8. If figures conflict between sources, flag the conflict and show both values
+9. For every calculated/derived figure, include the formula and input values used
+10. Never use evaluative language: "strong", "weak", "attractive", "concerning", "impressive"
+11. For transcript content: only paraphrase what appears in the text provided; never characterize management tone; report stated figures verbatim
+
+Return ONLY this JSON structure — no preamble, no markdown fencing. Use null for any unavailable field. Monetary values as raw numbers (not strings). Keep priceHistory empty [] (it is populated separately).
+
+{
+  "companyProfile": { "legalName": "", "ticker": "", "exchange": "", "sector": "", "industry": "", "founded": null, "ipoDate": null, "ipoPrice": null, "headquarters": "", "employees": null, "fiscalYearEnd": "", "description": "", "businessModel": "", "revenueStreams": [], "geographicPresence": "", "recentStrategicPriorities": "", "topRiskFactors": [], "sicCode": "", "irWebsiteUrl": null, "secEdgarUrl": "" },
+  "currentMarketData": { "price": null, "priceDate": "", "marketCap": null, "enterpriseValue": null, "sharesOutstanding": null, "sharesFloat": null, "week52High": null, "week52Low": null, "beta": null, "dividendYield": null, "dividendPerShare": null, "ma50": null, "ma200": null, "shortInterest": null, "shortRatio": null, "volume": null, "nextEarningsDate": null },
+  "valuationMetrics": { "peRatioTTM": null, "pegRatio": null, "priceToBook": null, "priceToSales": null, "priceToFreeCashFlow": null, "evToEbitda": null, "evToRevenue": null, "ebitdaMargin": null, "sourceNote": "" },
+  "keyCalculatedMetrics": {
+    "netDebt": { "value": null, "totalDebt": null, "cash": null, "formula": "", "asOf": "" },
+    "fcfYield": { "value": null, "fcfTTM": null, "marketCap": null, "formula": "", "asOf": "" },
+    "cashConversionRate": { "value": null, "operatingCashFlow": null, "netIncome": null, "formula": "", "note": "A ratio above 1.0 means the company converts more than $1 of cash per $1 of accounting profit", "asOf": "" },
+    "revenueCAGR5yr": { "value": null, "startYear": "", "endYear": "", "startRevenue": null, "endRevenue": null, "formula": "" },
+    "capexAsPercentRevenueTTM": { "value": null, "capex": null, "revenue": null, "formula": "" },
+    "effectiveTaxRateMostRecent": { "value": null, "taxExpense": null, "pretaxIncome": null, "year": "", "formula": "" }
+  },
+  "revenueHistory": [ { "year": "", "revenue": null, "yoyGrowth": null, "source": "" } ],
+  "profitabilityHistory": [ { "year": "", "grossProfit": null, "grossMargin": null, "operatingIncome": null, "operatingMargin": null, "netIncome": null, "netMargin": null, "eps": null, "epsDiluted": null, "source": "" } ],
+  "ebitdaHistory": [ { "year": "", "ebitda": null, "ebitdaMargin": null, "depreciationAndAmortization": null, "operatingIncome": null, "formula": "", "source": "" } ],
+  "operatingLeverageHistory": [ { "year": "", "revenueGrowth": null, "operatingIncomeGrowth": null } ],
+  "balanceSheetSnapshot": { "asOf": "", "totalAssets": null, "totalLiabilities": null, "shareholderEquity": null, "cashAndEquivalents": null, "longTermDebt": null, "shortTermDebt": null, "totalDebt": null, "debtToEquity": null, "currentRatio": null, "quickRatio": null, "source": "" },
+  "debtMaturity": { "asOf": "", "shortTermDebt": null, "longTermDebt": null, "totalDebt": null, "shortTermAsPercentOfTotal": null, "interestExpense": null, "impliedAverageInterestRate": null, "interestRateFormula": "", "source": "" },
+  "cashFlowHistory": [ { "year": "", "operatingCashFlow": null, "capitalExpenditures": null, "freeCashFlow": null, "fcfFormula": "", "source": "" } ],
+  "capexAndRdHistory": [ { "year": "", "capex": null, "revenue": null, "capexAsPercentRevenue": null, "rdExpense": null, "rdAsPercentRevenue": null, "source": "" } ],
+  "returnMetrics": { "asOf": "", "roe": null, "roa": null, "roic": null, "interestCoverage": null, "effectiveTaxRate": null, "source": "" },
+  "sharesHistory": [ { "year": "", "basicSharesOutstanding": null, "dilutedSharesOutstanding": null, "yoyChangePercent": null, "source": "" } ],
+  "revenueSegmentation": { "asOf": "", "byProduct": [ { "segment": "", "revenue": null, "percentOfTotal": null } ], "byGeography": [ { "region": "", "revenue": null, "percentOfTotal": null } ], "concentrationNote": null, "source": "" },
+  "earningsHistory": [ { "quarter": "", "epsActual": null, "epsEstimated": null, "epsSurprise": null, "revenueActual": null, "revenueEstimated": null, "revenueSurprise": null, "result": "no_estimate" } ],
+  "forwardEstimates": { "source": "Financial Modeling Prep analyst consensus", "disclaimer": "Third-party analyst consensus estimates only. Not forecasts or recommendations. Frequently revised. Actual results may differ materially.", "quarters": [ { "quarter": "", "estimatedRevenue": null, "estimatedEPS": null, "numberOfAnalysts": null } ] },
+  "earningsCallSummary": { "mostRecentCallDate": null, "quarter": null, "managementGuidance": [ { "topic": "other", "statement": "", "speakerRole": "other", "isQuantified": false, "quantifiedValue": null } ], "keyThemesDiscussed": [], "analystQuestionsTopics": [], "transcriptSource": null, "available": false },
+  "keyEvents": [ { "date": "", "eventType": "filing_8K", "title": "", "description": "", "source": "", "sourceUrl": null, "materialityFlag": "low" } ],
+  "recentFilings": [ { "type": "", "date": "", "description": "", "url": "" } ],
+  "priceHistory": [],
+  "dataQualityFlags": [],
+  "disclaimer": "This report contains publicly available financial data compiled for informational purposes only. It does not constitute investment advice, a recommendation to buy or sell any security, or a solicitation of any investment. Forward-looking statements and analyst estimates involve risk and uncertainty. Always consult a qualified financial advisor before making investment decisions."
+}`;
+
+async function synthesize(bundle, anthropicKey) {
+  const userMsg = 'Synthesize the following raw financial data into the required JSON. Company query: '+bundle.companyName+'\n\nRAW DATA:\n'+JSON.stringify(bundle.raw);
+  const out = await callClaude(SYNTH_SYS, userMsg, anthropicKey, 16000);
+  const data = extractJSON(out);
+  data.priceHistory = bundle.priceHistory || [];
+  return data;
+}
+
+/* ============================ FETCH ORCHESTRATION ============================ */
+async function fetchCompany(company, keys, onStep) {
+  // 1. Resolve ticker (name -> ticker) via CORS-safe search when needed.
+  let ticker = (company.ticker || '').toUpperCase();
+  const looksLikeTicker = /^[A-Z.\-]{1,5}$/.test(ticker);
+  if (!looksLikeTicker) {
+    const resolved = await resolveTicker(company.name, keys);
+    if (resolved) ticker = resolved;
+  }
+  company.ticker = ticker;
+
+  // 2. Market + statements (these only need the ticker, and are CORS-friendly).
+  onStep && onStep('market', 'run');
+  const [av, fmp, transcript] = await Promise.all([
+    fetchAlphaVantage(ticker, keys.alphavantage),
+    fetchFMP(ticker, keys.fmp),
+    fetchTranscript(ticker, keys.fmp),
+  ]);
+  onStep && onStep('market', av.error ? 'warn' : 'ok');
+  onStep && onStep('transcript', transcript.available ? 'ok' : 'warn');
+  onStep && onStep('statements', fmp.error ? 'warn' : 'ok');
+
+  // 3. CIK comes from FMP profile / AV overview (data.sec.gov XBRL + ticker map are CORS-blocked).
+  const profile = (fmp.profile && fmp.profile[0]) || null;
+  const cik = (av.overview && num(av.overview.CIK)) || (profile && num(profile.cik)) || null;
+
+  // 4. SEC submissions (CORS-safe) -> metadata, filings, IR links.
+  onStep && onStep('sec', 'run');
+  const sec = await fetchSEC(company, cik);
+  onStep && onStep('sec', sec.error ? 'warn' : 'ok');
+
+  const raw = {
+    query: { name: company.name, ticker, exchange: company.exchange },
+    sec: { cik: sec.cik || cik, meta: sec.meta, filings: sec.filings, error: sec.error },
+    alphaVantage: { quote: av.quote, overview: av.overview, error: av.error },
+    fmp: {
+      profile, income: fmp.income, balance: fmp.balance, cashflow: fmp.cashflow, ratios: fmp.ratios,
+      earnings: (fmp.earnings||[]).slice(0,8), estimates: fmp.estimates,
+      segProduct: fmp.segProduct, segGeo: fmp.segGeo, shares: fmp.shares, calendar: fmp.calendar, error: fmp.error,
+    },
+    transcript: { available: transcript.available, date: transcript.date, quarter: transcript.quarter, text: transcript.text },
+  };
+  // strip AV target price field defensively
+  if (raw.alphaVantage.overview) delete raw.alphaVantage.overview.AnalystTargetPrice;
+
+  onStep && onStep('synthesis', 'run');
+  let data;
+  if (keys.anthropic) {
+    data = await synthesize({ companyName: company.name+' ('+ticker+')', raw, priceHistory: av.priceHistory }, keys.anthropic);
+  } else {
+    data = localSynthesize(raw, av.priceHistory);
+  }
+  onStep && onStep('synthesis', 'ok');
+  return { data, raw, sec };
+}
+
+/* ---- Local synthesis fallback (no Anthropic key) — builds from SEC + AV + FMP directly ---- */
+function localSynthesize(raw, priceHistory) {
+  const ov = raw.alphaVantage.overview || {};
+  const q = raw.alphaVantage.quote || {};
+  const prof = (raw.fmp.profile && raw.fmp.profile[0]) || {};
+  const rangeLo = prof.range ? num(String(prof.range).split('-')[0]) : null;
+  const rangeHi = prof.range ? num(String(prof.range).split('-')[1]) : null;
+  const inc = raw.fmp.income || [];
+  const bs = raw.fmp.balance || [];
+  const cf = raw.fmp.cashflow || [];
+  const ratios = raw.fmp.ratios || [];
+  const meta = raw.sec.meta || {};
+  const cik = raw.sec.cik;
+  const rev = [...inc].reverse();
+  const revenueHistory = rev.map((r,i,arr) => ({ year:String(r.calendarYear), revenue:num(r.revenue), yoyGrowth: i>0 && num(arr[i-1].revenue) ? ((num(r.revenue)-num(arr[i-1].revenue))/num(arr[i-1].revenue))*100 : null, source:'FMP' }));
+  const profitabilityHistory = rev.map(r => ({ year:String(r.calendarYear), grossProfit:num(r.grossProfit), grossMargin: num(r.revenue)?num(r.grossProfit)/num(r.revenue)*100:null, operatingIncome:num(r.operatingIncome), operatingMargin: num(r.revenue)?num(r.operatingIncome)/num(r.revenue)*100:null, netIncome:num(r.netIncome), netMargin: num(r.revenue)?num(r.netIncome)/num(r.revenue)*100:null, eps:num(r.eps), epsDiluted:num(r.epsdiluted), source:'FMP' }));
+  const cashFlowHistory = [...cf].reverse().map(c => ({ year:String(c.calendarYear), operatingCashFlow:num(c.operatingCashFlow), capitalExpenditures:num(c.capitalExpenditure), freeCashFlow:num(c.freeCashFlow), fcfFormula:'FCF = OCF − CapEx', source:'FMP' }));
+  const latestBs = bs[0] || {};
+  const latestRatio = ratios[0] || {};
+  const totalDebt = num(latestBs.totalDebt);
+  const cash = num(latestBs.cashAndCashEquivalents);
+  return {
+    companyProfile: {
+      legalName: meta.name || ov.Name || prof.companyName || raw.query.name, ticker: raw.query.ticker, exchange: ov.Exchange || prof.exchangeShortName || (meta.exchanges&&meta.exchanges[0]) || raw.query.exchange,
+      sector: ov.Sector || prof.sector || '', industry: ov.Industry || prof.industry || meta.sicDescription || '', founded:null, ipoDate: ov.IPODate || prof.ipoDate || null, ipoPrice:null,
+      headquarters: ov.Address || [prof.city, prof.state, prof.country].filter(Boolean).join(', ') || '', employees: num(ov.FullTimeEmployees) ?? num(prof.fullTimeEmployees), fiscalYearEnd: ov.FiscalYearEnd || meta.fiscalYearEnd || '',
+      description: ov.Description || prof.description || '', businessModel:'', revenueStreams:[], geographicPresence:'', recentStrategicPriorities:'', topRiskFactors:[],
+      sicCode: meta.sic || '', irWebsiteUrl: meta.website || prof.website || null,
+      secEdgarUrl: cik ? 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK='+cik : '',
+    },
+    currentMarketData: {
+      price: num(q['05. price']) ?? num(prof.price) ?? num(ov['52WeekHigh']), priceDate: q['07. latest trading day'] || '', marketCap: num(ov.MarketCapitalization) ?? num(prof.mktCap),
+      enterpriseValue: null, sharesOutstanding: num(ov.SharesOutstanding) ?? (num(prof.mktCap)&&num(prof.price)?Math.round(num(prof.mktCap)/num(prof.price)):null), sharesFloat: num(ov.SharesFloat),
+      week52High: num(ov['52WeekHigh']) ?? rangeHi, week52Low: num(ov['52WeekLow']) ?? rangeLo, beta: num(ov.Beta) ?? num(prof.beta), dividendYield: num(ov.DividendYield)!=null?num(ov.DividendYield)*100:(num(prof.lastDiv)&&num(prof.price)?num(prof.lastDiv)/num(prof.price)*100:null),
+      dividendPerShare: num(ov.DividendPerShare) ?? num(prof.lastDiv), ma50: num(ov['50DayMovingAverage']), ma200: num(ov['200DayMovingAverage']),
+      shortInterest: num(ov.SharesShort), shortRatio: num(ov.ShortRatio), volume: num(q['06. volume']) ?? num(prof.volAvg),
+      nextEarningsDate: (raw.fmp.calendar&&raw.fmp.calendar[0]&&raw.fmp.calendar[0].date) || null,
+    },
+    valuationMetrics: {
+      peRatioTTM: num(ov.PERatio), pegRatio: num(ov.PEGRatio), priceToBook: num(ov.PriceToBookRatio), priceToSales: num(ov.PriceToSalesRatioTTM),
+      priceToFreeCashFlow: num(latestRatio.priceToFreeCashFlowsRatio), evToEbitda: num(ov.EVToEBITDA), evToRevenue: num(ov.EVToRevenue),
+      ebitdaMargin: num(latestRatio.ebitdaratio)!=null?num(latestRatio.ebitdaratio)*100:null, sourceNote:'Alpha Vantage OVERVIEW + FMP ratios',
+    },
+    keyCalculatedMetrics: {
+      netDebt: { value: totalDebt!=null&&cash!=null? totalDebt-cash:null, totalDebt, cash, formula:'Net Debt = Total Debt − Cash', asOf: latestBs.date||'' },
+      fcfYield: { value: (cashFlowHistory.length&&num(ov.MarketCapitalization))? cashFlowHistory[cashFlowHistory.length-1].freeCashFlow/num(ov.MarketCapitalization)*100:null, fcfTTM: cashFlowHistory.length?cashFlowHistory[cashFlowHistory.length-1].freeCashFlow:null, marketCap:num(ov.MarketCapitalization), formula:'FCF Yield = FCF ÷ Market Cap', asOf:'' },
+      cashConversionRate: { value:null, operatingCashFlow:null, netIncome:null, formula:'Cash Conversion = OCF ÷ Net Income', note:'A ratio above 1.0 means the company converts more than $1 of cash per $1 of accounting profit', asOf:'' },
+      revenueCAGR5yr: revenueHistory.length>=2? (function(){const s=revenueHistory[0],e=revenueHistory[revenueHistory.length-1],n=revenueHistory.length-1;return {value: s.revenue&&e.revenue?(Math.pow(e.revenue/s.revenue,1/n)-1)*100:null, startYear:s.year, endYear:e.year, startRevenue:s.revenue, endRevenue:e.revenue, formula:'CAGR = (End ÷ Start)^(1/'+n+') − 1'};})() : {value:null,startYear:'',endYear:'',startRevenue:null,endRevenue:null,formula:''},
+      capexAsPercentRevenueTTM: { value:null, capex:null, revenue:null, formula:'CapEx % Revenue = CapEx ÷ Revenue' },
+      effectiveTaxRateMostRecent: { value: num(latestRatio.effectiveTaxRate)!=null?num(latestRatio.effectiveTaxRate)*100:null, taxExpense:null, pretaxIncome:null, year:String((inc[0]||{}).calendarYear||''), formula:'Effective Tax Rate = Tax Expense ÷ Pre-Tax Income' },
+    },
+    revenueHistory, profitabilityHistory,
+    ebitdaHistory: rev.map(r => ({ year:String(r.calendarYear), ebitda:num(r.ebitda), ebitdaMargin: num(r.revenue)&&num(r.ebitda)?num(r.ebitda)/num(r.revenue)*100:null, depreciationAndAmortization:num(r.depreciationAndAmortization), operatingIncome:num(r.operatingIncome), formula:'EBITDA = Operating Income + D&A', source:'FMP' })),
+    operatingLeverageHistory: rev.map((r,i,arr) => ({ year:String(r.calendarYear), revenueGrowth: i>0&&num(arr[i-1].revenue)?((num(r.revenue)-num(arr[i-1].revenue))/num(arr[i-1].revenue))*100:null, operatingIncomeGrowth: i>0&&num(arr[i-1].operatingIncome)?((num(r.operatingIncome)-num(arr[i-1].operatingIncome))/Math.abs(num(arr[i-1].operatingIncome)))*100:null })),
+    balanceSheetSnapshot: { asOf: latestBs.date||'', totalAssets:num(latestBs.totalAssets), totalLiabilities:num(latestBs.totalLiabilities), shareholderEquity:num(latestBs.totalStockholdersEquity), cashAndEquivalents:cash, longTermDebt:num(latestBs.longTermDebt), shortTermDebt:num(latestBs.shortTermDebt), totalDebt, debtToEquity:num(latestRatio.debtEquityRatio), currentRatio:num(latestRatio.currentRatio), quickRatio:num(latestRatio.quickRatio), source:'FMP' },
+    debtMaturity: { asOf: latestBs.date||'', shortTermDebt:num(latestBs.shortTermDebt), longTermDebt:num(latestBs.longTermDebt), totalDebt, shortTermAsPercentOfTotal: totalDebt&&num(latestBs.shortTermDebt)!=null?num(latestBs.shortTermDebt)/totalDebt*100:null, interestExpense:num((inc[0]||{}).interestExpense), impliedAverageInterestRate: totalDebt&&num((inc[0]||{}).interestExpense)?num((inc[0]||{}).interestExpense)/totalDebt*100:null, interestRateFormula:'Interest Expense ÷ Total Debt', source:'FMP' },
+    cashFlowHistory,
+    capexAndRdHistory: rev.map(r => ({ year:String(r.calendarYear), capex:Math.abs(num(([...cf].reverse().find(c=>c.calendarYear===r.calendarYear)||{}).capitalExpenditure)||0)||null, revenue:num(r.revenue), capexAsPercentRevenue:null, rdExpense:num(r.researchAndDevelopmentExpenses), rdAsPercentRevenue: num(r.revenue)&&num(r.researchAndDevelopmentExpenses)?num(r.researchAndDevelopmentExpenses)/num(r.revenue)*100:null, source:'FMP' })),
+    returnMetrics: { asOf: latestBs.date||'', roe:num(latestRatio.returnOnEquity)!=null?num(latestRatio.returnOnEquity)*100:null, roa:num(latestRatio.returnOnAssets)!=null?num(latestRatio.returnOnAssets)*100:null, roic:num(latestRatio.returnOnCapitalEmployed)!=null?num(latestRatio.returnOnCapitalEmployed)*100:null, interestCoverage:num(latestRatio.interestCoverage), effectiveTaxRate:num(latestRatio.effectiveTaxRate)!=null?num(latestRatio.effectiveTaxRate)*100:null, source:'FMP ratios' },
+    sharesHistory: (raw.fmp.shares||[]).slice(0,5).reverse().map(s => ({ year:(s.date||'').slice(0,4), basicSharesOutstanding:num(s.outstandingShares), dilutedSharesOutstanding:null, yoyChangePercent:null, source:'FMP' })),
+    revenueSegmentation: { asOf:'', byProduct: segToArr(raw.fmp.segProduct), byGeography: segToArr(raw.fmp.segGeo), concentrationNote:null, source:'FMP' },
+    earningsHistory: (raw.fmp.earnings||[]).slice(0,8).map(e => ({ quarter:e.date, epsActual:num(e.actualEarningResult), epsEstimated:num(e.estimatedEarning), epsSurprise: num(e.actualEarningResult)!=null&&num(e.estimatedEarning)!=null?num(e.actualEarningResult)-num(e.estimatedEarning):null, revenueActual:null, revenueEstimated:null, revenueSurprise:null, result: num(e.actualEarningResult)>num(e.estimatedEarning)?'beat':num(e.actualEarningResult)<num(e.estimatedEarning)?'missed':'met' })),
+    forwardEstimates: { source:'Financial Modeling Prep analyst consensus', disclaimer:'Third-party analyst consensus estimates only. Not forecasts or recommendations. Frequently revised. Actual results may differ materially.', quarters: (raw.fmp.estimates||[]).slice(0,4).map(e => ({ quarter:e.date, estimatedRevenue:num(e.estimatedRevenueAvg), estimatedEPS:num(e.estimatedEpsAvg), numberOfAnalysts:num(e.numberAnalystEstimatedRevenue) })) },
+    earningsCallSummary: { mostRecentCallDate:null, quarter:null, managementGuidance:[], keyThemesDiscussed:[], analystQuestionsTopics:[], transcriptSource:null, available:false },
+    keyEvents: (raw.sec.filings||[]).slice(0,12).map(f => ({ date:f.date, eventType: f.type==='8-K'?'filing_8K':f.type==='10-K'?'earnings':'filing_8K', title:f.type+' filed', description:f.description, source:'SEC EDGAR', sourceUrl:f.url, materialityFlag: f.type==='10-K'?'high':f.type==='8-K'?'medium':'low' })),
+    recentFilings: (raw.sec.filings||[]).slice(0,10),
+    priceHistory: priceHistory || [],
+    dataQualityFlags: [ raw.alphaVantage.error?'Alpha Vantage data unavailable ('+raw.alphaVantage.error+')':null, raw.fmp.error?'FMP data unavailable':null, raw.sec.error?'SEC data issue: '+raw.sec.error:null, !KEYS.get().anthropic?'AI synthesis disabled (no Anthropic key) — showing direct data mapping':null ].filter(Boolean),
+    disclaimer: 'This report contains publicly available financial data compiled for informational purposes only. It does not constitute investment advice, a recommendation to buy or sell any security, or a solicitation of any investment. Forward-looking statements and analyst estimates involve risk and uncertainty. Always consult a qualified financial advisor before making investment decisions.',
+  };
+}
+function segToArr(seg) {
+  if (!seg || !Array.isArray(seg) || !seg.length) return [];
+  const latest = seg[0];
+  const key = Object.keys(latest).find(k => k !== 'date' && typeof latest[k] === 'object') || Object.keys(latest)[1];
+  const obj = latest[key] || latest;
+  const entries = Object.entries(obj).filter(([k,v]) => typeof v === 'number');
+  const total = entries.reduce((s,[,v]) => s+v, 0);
+  return entries.map(([k,v]) => ({ segment:k, region:k, revenue:v, percentOfTotal: total? v/total*100:null }));
+}
+
+/* ============================ UI PRIMITIVES ============================ */
+function Card({ children, variant='card', className='', style={}, ...rest }) {
+  const cls = variant === 'elevated' ? 'card-elevated' : variant === 'glass' ? 'card-glass' : 'card';
+  return <div className={cls+' '+className} style={{ padding:24, ...style }} {...rest}>{children}</div>;
+}
+function SectionTitle({ children, sub, right }) {
+  return (
+    <div className="flex items-end justify-between mb-3">
+      <div>
+        <h3 style={{ color:C.tPri, fontWeight:600, fontSize:15 }}>{children}</h3>
+        {sub && <div style={{ color:C.tMut, fontSize:12, marginTop:2 }}>{sub}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
+function Info({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="info-wrap" onMouseEnter={()=>setOpen(true)} onMouseLeave={()=>setOpen(false)} style={{ marginLeft:6 }}>
+      <span style={{ display:'inline-flex', width:14, height:14, borderRadius:'50%', border:'1px solid '+C.tMut, color:C.tMut, fontSize:10, alignItems:'center', justifyContent:'center', cursor:'help' }}>i</span>
+      {open && text && <span className="info-pop">{text}</span>}
+    </span>
+  );
+}
+function Source({ children }) { return <div style={{ color:C.tMut, fontSize:11, marginTop:8 }}>{children}</div>; }
+function Empty({ children }) { return <div style={{ color:C.tMut, fontSize:13, padding:'24px 0', textAlign:'center' }}>{children}</div>; }
+const hasData = (a) => Array.isArray(a) && a.length > 0;
+
+/* ============================ SETTINGS PANEL ============================ */
+function SettingsPanel({ open, onClose, keys, setKeys }) {
+  const [local, setLocal] = useState(keys);
+  useEffect(() => setLocal(keys), [keys, open]);
+  const save = () => {
+    Object.entries(local).forEach(([k,v]) => KEYS.set(k, v));
+    setKeys(local); onClose();
+  };
+  if (!open) return null;
+  const field = (label, k, link, linkText) => (
+    <div style={{ marginBottom:18 }}>
+      <label style={{ display:'block', color:C.tSec, fontSize:13, marginBottom:6 }}>{label}</label>
+      <input type="password" value={local[k]||''} onChange={e=>setLocal({...local, [k]:e.target.value})}
+        placeholder="Paste key…" className="search-input" style={{ fontSize:14, padding:'10px 12px' }} />
+      <a href={link} target="_blank" rel="noreferrer" style={{ fontSize:12 }}>{linkText} →</a>
+    </div>
+  );
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:100 }}>
+      <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,.6)' }} />
+      <div className="fade-in" style={{ position:'absolute', top:0, right:0, height:'100%', width:'min(420px,100%)', background:C.card, borderLeft:'1px solid '+C.border, padding:28, overflowY:'auto' }}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 style={{ fontSize:18, fontWeight:600 }}>Settings — API Keys</h2>
+          <button onClick={onClose} style={{ color:C.tSec, fontSize:22, background:'none', border:'none', cursor:'pointer' }}>×</button>
+        </div>
+        {field('Anthropic API Key', 'anthropic', 'https://console.anthropic.com', 'console.anthropic.com')}
+        {field('Alpha Vantage API Key', 'alphavantage', 'https://www.alphavantage.co/support/#api-key', 'Get free Alpha Vantage key')}
+        {field('Financial Modeling Prep API Key', 'fmp', 'https://financialmodelingprep.com/developer/docs', 'Get free FMP key')}
+        <div style={{ background:C.elevated, border:'1px solid '+C.border, borderRadius:8, padding:12, fontSize:12, color:C.tSec, marginBottom:20 }}>
+          SEC EDGAR data requires no API key and is always available.
+        </div>
+        <button onClick={save} style={{ width:'100%', background:C.accent, color:'#fff', border:'none', borderRadius:10, padding:'12px', fontWeight:600, cursor:'pointer' }}>Save Keys</button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================ SEARCH + LOADING ============================ */
+function SearchBar({ onSearch, busy }) {
+  const [q, setQ] = useState('');
+  return (
+    <div className="flex gap-3">
+      <input className="search-input" placeholder="Search a company or compare two — e.g. Apple, NVDA, Apple vs Microsoft"
+        value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter'&&q.trim()) onSearch(q.trim()); }} />
+      <button disabled={busy||!q.trim()} onClick={()=>q.trim()&&onSearch(q.trim())}
+        style={{ background: busy||!q.trim()?C.border:C.accent, color:'#fff', border:'none', borderRadius:12, padding:'0 28px', fontWeight:600, cursor: busy||!q.trim()?'default':'pointer', whiteSpace:'nowrap' }}>
+        {busy ? 'Searching…' : 'Search'}
+      </button>
+    </div>
+  );
+}
+const STEP_LABELS = {
+  parse:'Parsing your query', sec:'Fetching SEC filings & company facts', market:'Fetching market & price data',
+  transcript:'Fetching earnings call transcript', statements:'Fetching financial statements & estimates', synthesis:'Running financial synthesis',
+};
+function LoadingState({ steps, detail }) {
+  const order = ['parse','sec','market','transcript','statements','synthesis'];
+  const icon = (s) => s==='ok' ? <span style={{color:C.up}}>✓</span> : s==='warn' ? <span style={{color:C.warn}}>⚠</span> : s==='run' ? <span style={{color:C.accent}} className="spin" >⟳</span> : <span style={{color:C.tMut}}>·</span>;
+  return (
+    <Card variant="elevated" style={{ maxWidth:560, margin:'48px auto' }}>
+      <h3 style={{ fontWeight:600, marginBottom:18, fontSize:16 }}>Building dashboard…</h3>
+      {order.map((k,i) => (
+        <div key={k} className="flex items-center gap-3" style={{ padding:'8px 0', opacity: steps[k]?1:0.45 }}>
+          <span className="mono" style={{ width:46, color:C.tMut, fontSize:12 }}>{i+1}/6</span>
+          <span style={{ width:18, textAlign:'center' }}>{icon(steps[k])}</span>
+          <span style={{ fontSize:14, color: steps[k]?C.tPri:C.tMut }}>{STEP_LABELS[k]}{k==='parse'&&detail?' — '+detail:''}{steps[k]==='run'?'…':''}</span>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+/* ============================ DELTA HELPERS ============================ */
+function deltaText(a, b, isPct) {
+  a = num(a); b = num(b);
+  if (a === null || b === null) return '—';
+  const d = a - b;
+  if (isPct) return (d>=0?'+':'')+d.toFixed(1)+'pp';
+  const rel = b !== 0 ? (d/Math.abs(b))*100 : null;
+  return (d>=0?'+':'')+fmtAbbr(d)+(rel!==null?' ('+(rel>=0?'+':'')+rel.toFixed(0)+'%)':'');
+}
+
+/* ============================ 1. COMPANY HEADER ============================ */
+function CompanyHeader({ data, onCompare }) {
+  const p = data.companyProfile || {};
+  const m = data.currentMarketData || {};
+  const chg = num(m.price) !== null && num(m.ma50) !== null ? null : null;
+  return (
+    <Card variant="elevated" className="fade-in">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 style={{ fontSize:26, fontWeight:700 }}>{p.legalName || '—'}</h1>
+            <span className="ticker" style={{ fontSize:18, fontWeight:600 }}>{p.ticker}</span>
+            {p.exchange && <span style={{ fontSize:11, padding:'3px 8px', border:'1px solid '+C.border, borderRadius:6, color:C.tSec }}>{p.exchange}</span>}
+          </div>
+          <div className="flex items-baseline gap-3 mt-3">
+            <span className="mono glow-price" style={{ fontSize:34, fontWeight:700, color:C.tPri }}>{m.price!=null?fmtMoney(m.price):'—'}</span>
+            {m.priceDate && <span style={{ color:C.tMut, fontSize:12 }}>as of {m.priceDate}</span>}
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3" style={{ fontSize:13 }}>
+            <span style={{ color:C.tSec }}>Mkt Cap <span className="mono">{fmt$(m.marketCap)}</span></span>
+            <span style={{ color:C.tSec }}>EV <span className="mono">{fmt$(m.enterpriseValue)}</span></span>
+            <span style={{ color:C.tSec }}>{p.sector||'—'}</span>
+            <span style={{ color:C.tMut }}>{p.industry||''}</span>
+          </div>
+          {p.ipoDate && <div style={{ color:C.tMut, fontSize:12, marginTop:6 }}>Public since {p.ipoDate}{p.ipoPrice?' · IPO price '+fmtMoney(p.ipoPrice):''}</div>}
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          {m.nextEarningsDate && <span style={{ fontSize:12, padding:'5px 12px', border:'1px solid '+C.warn+'66', color:C.warn, borderRadius:8 }}>Next earnings: {m.nextEarningsDate}</span>}
+          {onCompare && <button onClick={onCompare} style={{ fontSize:13, color:C.accent3, background:'none', border:'1px solid '+C.border, borderRadius:8, padding:'6px 12px', cursor:'pointer' }}>Compare with another company →</button>}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ============================ 2. STOCK HERO CHART ============================ */
+function StockHeroChart({ data }) {
+  const all = data.priceHistory || [];
+  const m = data.currentMarketData || {};
+  const [range, setRange] = useState('1Y');
+  const [ma50, setMa50] = useState(false);
+  const [ma200, setMa200] = useState(false);
+  const months = { '1M':1, '3M':3, '6M':6, '1Y':12, '3Y':36, '5Y':60 }[range];
+  const series = all.slice(-Math.max(months+1, 2));
+  if (!hasData(all)) return <Card><SectionTitle>Stock Price</SectionTitle><Empty>Price history not available — add an Alpha Vantage key in Settings.</Empty></Card>;
+  const first = series[0]?.price, last = series[series.length-1]?.price;
+  const ret = first ? ((last-first)/first*100) : null;
+  const events = (data.keyEvents||[]).filter(e => e.materialityFlag==='high' && e.date);
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+        <SectionTitle>Stock Price <span style={{color:C.tMut,fontWeight:400,fontSize:12}}>(adjusted close, monthly)</span></SectionTitle>
+        <div className="flex gap-2 flex-wrap">
+          {Object.keys({ '1M':0,'3M':0,'6M':0,'1Y':0,'3Y':0,'5Y':0 }).map(r =>
+            <button key={r} className={'pill '+(range===r?'pill-active':'')} onClick={()=>setRange(r)}>{r}</button>)}
+          <button className={'pill '+(ma50?'pill-active':'')} onClick={()=>setMa50(!ma50)} style={ma50?{borderColor:C.accent2,color:'#fff'}:{}}>50D MA</button>
+          <button className={'pill '+(ma200?'pill-active':'')} onClick={()=>setMa200(!ma200)} style={ma200?{borderColor:C.accent3,color:'#fff'}:{}}>200D MA</button>
+        </div>
+      </div>
+      <div style={{ height:320 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={series} margin={{ top:10, right:10, left:0, bottom:0 }}>
+            <defs>
+              <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={C.accent} stopOpacity={0.3}/>
+                <stop offset="95%" stopColor={C.accent} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid {...GRID} />
+            <XAxis dataKey="date" {...AXIS} tickFormatter={d=>d.slice(0,7)} minTickGap={40} />
+            <YAxis {...AXIS} domain={['auto','auto']} tickFormatter={v=>'$'+v.toFixed(0)} width={56} />
+            <Tooltip {...TIP_STYLE} formatter={v=>['$'+num(v).toFixed(2),'Price']} />
+            {ma50 && m.ma50 && <ReferenceLine y={num(m.ma50)} stroke={C.accent2} strokeDasharray="4 4" label={{ value:'50D MA', fill:C.accent2, fontSize:10, position:'insideTopRight' }} />}
+            {ma200 && m.ma200 && <ReferenceLine y={num(m.ma200)} stroke={C.accent3} strokeDasharray="4 4" label={{ value:'200D MA', fill:C.accent3, fontSize:10, position:'insideBottomRight' }} />}
+            {events.map((e,i) => { const match = series.find(s => s.date >= e.date.slice(0,7)); return match ? <ReferenceLine key={i} x={match.date} stroke={C.warn} strokeDasharray="3 3" strokeOpacity={0.6} /> : null; })}
+            <Area type="monotone" dataKey="price" stroke={C.accent} strokeWidth={2} fill="url(#priceGradient)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex flex-wrap gap-x-8 gap-y-1 mt-3" style={{ fontSize:12 }}>
+        <span style={{ color:C.tSec }}>{range} return <span className="mono" style={{ color: ret>=0?C.up:C.down }}>{ret!=null?(ret>=0?'+':'')+ret.toFixed(1)+'%':'—'}</span></span>
+        <span style={{ color:C.tSec }}>52W High <span className="mono">{fmtMoney(m.week52High)}</span></span>
+        <span style={{ color:C.tSec }}>52W Low <span className="mono">{fmtMoney(m.week52Low)}</span></span>
+        <span style={{ color:C.tSec }}>Volume <span className="mono">{fmtInt(m.volume)}</span></span>
+      </div>
+    </Card>
+  );
+}
+
+/* ============================ 3. EVENTS DENSITY TIMELINE ============================ */
+function EventsDensityTimeline({ data }) {
+  const events = (data.keyEvents||[]).filter(e => e.date);
+  const [hover, setHover] = useState(null);
+  if (!hasData(events)) return null;
+  const colorOf = (t) => ({ earnings:C.accent, acquisition:C.accent2, leadership_change:C.warn, regulatory:C.down, legal:C.down, product_launch:C.accent3, filing_8K:C.tMut }[t] || C.tMut);
+  const sizeOf = (m) => m==='high'?6:m==='medium'?4:2.5;
+  const dates = events.map(e => +new Date(e.date)).filter(d=>!isNaN(d));
+  const min = Math.min(...dates), max = Math.max(...dates), span = (max-min)||1;
+  const W = 1000, H = 80;
+  return (
+    <Card>
+      <SectionTitle sub="Colored markers correlate corporate events with the price chart above. Dot size scales with materiality.">Key Events Density</SectionTitle>
+      <div style={{ position:'relative' }}>
+        <svg viewBox={'0 0 '+W+' '+H} width="100%" height="80" preserveAspectRatio="none" style={{ overflow:'visible' }}>
+          <line x1="0" y1={H/2} x2={W} y2={H/2} stroke={C.border} strokeWidth="1" />
+          {events.map((e,i) => {
+            const t = +new Date(e.date); if (isNaN(t)) return null;
+            const x = ((t-min)/span)*(W-20)+10;
+            return <circle key={i} cx={x} cy={H/2} r={sizeOf(e.materialityFlag)} fill={colorOf(e.eventType)}
+              style={{ cursor:'pointer' }} onMouseEnter={()=>setHover({ e, x })} onMouseLeave={()=>setHover(null)} />;
+          })}
+        </svg>
+        {hover && <div className="card" style={{ position:'absolute', left:Math.min(Math.max(hover.x/10,5),80)+'%', top:-6, transform:'translateX(-50%)', padding:'8px 10px', fontSize:11, width:200, zIndex:10 }}>
+          <div className="mono" style={{ color:C.tMut }}>{hover.e.date}</div>
+          <div style={{ color:C.tPri, fontWeight:600 }}>{hover.e.title}</div>
+          <div style={{ color:C.tSec, marginTop:2 }}>{hover.e.description}</div>
+        </div>}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2" style={{ fontSize:11, color:C.tMut }}>
+        <Legenddot c={C.accent}>Earnings</Legenddot><Legenddot c={C.accent2}>Acquisition</Legenddot>
+        <Legenddot c={C.warn}>Leadership</Legenddot><Legenddot c={C.down}>Legal/Reg</Legenddot>
+        <Legenddot c={C.accent3}>Product/Strategy</Legenddot><Legenddot c={C.tMut}>Filing</Legenddot>
+      </div>
+    </Card>
+  );
+}
+function Legenddot({ c, children }) { return <span className="flex items-center gap-1"><span style={{ width:8, height:8, borderRadius:'50%', background:c, display:'inline-block' }} />{children}</span>; }
+
+/* ============================ 4. VALUATION METRICS ROW ============================ */
+function ValuationMetricsRow({ data }) {
+  const v = data.valuationMetrics || {};
+  const m = data.currentMarketData || {};
+  const items = [
+    ['P/E (TTM)', fmtRatio(v.peRatioTTM)], ['PEG', fmtRatio(v.pegRatio)], ['P/S', fmtRatio(v.priceToSales)],
+    ['P/B', fmtRatio(v.priceToBook)], ['P/FCF', fmtRatio(v.priceToFreeCashFlow)], ['EV/EBITDA', fmtRatio(v.evToEbitda)],
+    ['EV/Revenue', fmtRatio(v.evToRevenue)], ['EBITDA Margin', pct100(v.ebitdaMargin)], ['Dividend Yield', m.dividendYield!=null?fmtPct(m.dividendYield):'—'],
+  ];
+  const spark = (data.revenueHistory||[]).map(r => ({ v: num(r.revenue) }));
+  return (
+    <Card>
+      <SectionTitle sub={v.sourceNote||'Definitions and values only — no benchmarks, no judgment.'}>Valuation Metrics</SectionTitle>
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {items.map(([label, val]) => (
+          <div key={label} style={{ minWidth:150, flex:'0 0 auto', background:C.elevated, border:'1px solid '+C.border, borderRadius:10, padding:14 }}>
+            <div className="flex items-center" style={{ color:C.tSec, fontSize:12 }}>{label}<Info text={METRIC_TOOLTIPS[label]} /></div>
+            <div className="mono glow-metric" style={{ fontSize:22, fontWeight:600, color:C.tPri, margin:'6px 0' }}>{val}</div>
+            <div style={{ height:32 }}>
+              {spark.length>1 && <ResponsiveContainer width="100%" height="100%"><LineChart data={spark}><Line type="monotone" dataKey="v" stroke={C.accent} strokeWidth={1.5} dot={false} /></LineChart></ResponsiveContainer>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ============================ 5. KEY CALCULATED METRICS ============================ */
+function KeyCalculatedMetrics({ data }) {
+  const k = data.keyCalculatedMetrics || {};
+  const nd = k.netDebt||{}, fcf=k.fcfYield||{}, ccr=k.cashConversionRate||{}, cagr=k.revenueCAGR5yr||{}, cx=k.capexAsPercentRevenueTTM||{}, tax=k.effectiveTaxRateMostRecent||{};
+  const netDebtNeg = num(nd.value) !== null && num(nd.value) < 0;
+  const cells = [
+    { label:'Net Debt', value: netDebtNeg ? 'Net Cash '+fmt$(Math.abs(num(nd.value))) : fmt$(nd.value), formula: nd.formula, inputs: 'Total Debt '+fmt$(nd.totalDebt)+' − Cash '+fmt$(nd.cash) },
+    { label:'FCF Yield', value: pct100(fcf.value), formula: fcf.formula, inputs:'FCF '+fmt$(fcf.fcfTTM)+' ÷ Mkt Cap '+fmt$(fcf.marketCap) },
+    { label:'Cash Conversion', value: fmtRatio(ccr.value), formula: ccr.formula, inputs:'OCF '+fmt$(ccr.operatingCashFlow)+' ÷ NI '+fmt$(ccr.netIncome) },
+    { label:'Revenue CAGR (5yr)', value: pct100(cagr.value), formula: cagr.formula, inputs: fmt$(cagr.startRevenue)+' ('+cagr.startYear+') → '+fmt$(cagr.endRevenue)+' ('+cagr.endYear+')' },
+    { label:'CapEx % of Revenue', value: pct100(cx.value), formula: cx.formula, inputs:'CapEx '+fmt$(cx.capex)+' ÷ Rev '+fmt$(cx.revenue) },
+    { label:'Effective Tax Rate', value: pct100(tax.value), formula: tax.formula, inputs:'Tax '+fmt$(tax.taxExpense)+' ÷ Pre-tax '+fmt$(tax.pretaxIncome)+' ('+(tax.year||'')+')' },
+  ];
+  return (
+    <Card>
+      <SectionTitle sub="Derived figures with inputs shown so you can verify the math.">Key Calculated Metrics</SectionTitle>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {cells.map(c => (
+          <div key={c.label} style={{ background:C.elevated, border:'1px solid '+C.border, borderRadius:10, padding:16 }}>
+            <div className="flex items-center" style={{ color:C.tSec, fontSize:12 }}>{c.label}<Info text={(c.formula||'')+'  •  '+(c.inputs||'')} /></div>
+            <div className="mono glow-metric" style={{ fontSize:24, fontWeight:600, color: c.label==='Net Debt'&&netDebtNeg?C.up:C.tPri, margin:'6px 0' }}>{c.value}</div>
+            <div className="mono" style={{ color:C.tMut, fontSize:10.5 }}>{c.inputs}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ============================ 6. COMPANY OVERVIEW ============================ */
+function CompanyOverviewCard({ data }) {
+  const [open, setOpen] = useState(false);
+  const p = data.companyProfile || {};
+  return (
+    <Card>
+      <div className="flex items-start justify-between cursor-pointer" onClick={()=>setOpen(!open)}>
+        <div style={{ flex:1 }}>
+          <SectionTitle>Company Overview</SectionTitle>
+          <p style={{ color:C.tSec, fontSize:14, lineHeight:1.6, maxWidth:900 }}>{p.description||'—'}</p>
+        </div>
+        <span style={{ color:C.tMut, fontSize:20, transform:open?'rotate(180deg)':'', transition:'transform .2s' }}>⌄</span>
+      </div>
+      {open && (
+        <div className="fade-in" style={{ marginTop:18, display:'grid', gap:16 }}>
+          {p.businessModel && <Field label="How it makes money">{p.businessModel}</Field>}
+          {hasData(p.revenueStreams) && <Field label="Revenue streams"><div className="flex flex-wrap gap-2">{p.revenueStreams.map((s,i)=><Pill key={i}>{s}</Pill>)}</div></Field>}
+          {p.geographicPresence && <Field label="Geographic presence">{p.geographicPresence}</Field>}
+          {p.recentStrategicPriorities && <Field label="Recent strategic priorities (most recent 10-K)">{p.recentStrategicPriorities}</Field>}
+          {hasData(p.topRiskFactors) && <Field label="Company-disclosed risk factors (verbatim from 10-K)"><ul style={{ paddingLeft:18, color:C.tSec, fontSize:13, lineHeight:1.6 }}>{p.topRiskFactors.map((r,i)=><li key={i}>{r}</li>)}</ul></Field>}
+          <div className="flex flex-wrap gap-x-6 gap-y-1" style={{ fontSize:12, color:C.tMut }}>
+            <span>HQ: {p.headquarters||'—'}</span><span>Employees: {fmtInt(p.employees)}</span>
+            <span>Fiscal year end: {p.fiscalYearEnd||'—'}</span><span>SIC: {p.sicCode||'—'}</span>
+          </div>
+          {p.secEdgarUrl && <a href={p.secEdgarUrl} target="_blank" rel="noreferrer" style={{ fontSize:13 }}>View raw 10-K on SEC EDGAR →</a>}
+        </div>
+      )}
+    </Card>
+  );
+}
+function Field({ label, children }) { return <div><div style={{ color:C.tMut, fontSize:11, textTransform:'uppercase', letterSpacing:.5, marginBottom:5 }}>{label}</div><div style={{ color:C.tSec, fontSize:14, lineHeight:1.6 }}>{children}</div></div>; }
+function Pill({ children }) { return <span style={{ fontSize:12, padding:'4px 10px', background:C.elevated, border:'1px solid '+C.border, borderRadius:999, color:C.tSec }}>{children}</span>; }
+
+/* ============================ CHART CARD WRAPPER ============================ */
+function ChartCard({ title, sub, height=260, source, children, right, empty }) {
+  return (
+    <Card>
+      <SectionTitle sub={sub} right={right}>{title}</SectionTitle>
+      {empty ? <Empty>{empty}</Empty> : <div style={{ height }}><ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer></div>}
+      {source && <Source>{source}</Source>}
+    </Card>
+  );
+}
+
+/* ============================ 7. REVENUE + GROWTH ============================ */
+function RevenueGrowthChart({ data }) {
+  const d = (data.revenueHistory||[]).map(r => ({ year:r.year, revenue:num(r.revenue), yoy:num(r.yoyGrowth) }));
+  if (!hasData(d)) return <ChartCard title="Revenue & Growth" empty="No revenue history available." />;
+  return (
+    <ChartCard title="Revenue & Growth" source="Source: SEC / FMP">
+      <ComposedChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis yAxisId="l" {...AXIS} tickFormatter={v=>fmtAbbr(v,'$')} width={56} />
+        <YAxis yAxisId="r" orientation="right" {...AXIS} tickFormatter={v=>v+'%'} width={44} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=> n==='YoY %' ? [fmtPct(v),'YoY %'] : [fmt$(v),'Revenue']} />
+        <ReferenceLine yAxisId="r" y={0} stroke={C.tMut} />
+        <Bar yAxisId="l" dataKey="revenue" name="Revenue" fill={C.accent} radius={[4,4,0,0]} />
+        <Line yAxisId="r" type="monotone" dataKey="yoy" name="YoY %" stroke={C.accent3} strokeWidth={2} dot={{ r:3 }} />
+      </ComposedChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 8. MARGIN TRENDS ============================ */
+function MarginTrendsChart({ data }) {
+  const d = (data.profitabilityHistory||[]).map(r => ({ year:r.year, gross:num(r.grossMargin), op:num(r.operatingMargin), net:num(r.netMargin) }));
+  if (!hasData(d)) return <ChartCard title="Margin Trends" empty="No margin data available." />;
+  return (
+    <ChartCard title="Margin Trends" source="Source: SEC / FMP">
+      <LineChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>v+'%'} width={44} />
+        <Tooltip {...TIP_STYLE} formatter={v=>fmtPct(v)} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <Line type="monotone" dataKey="gross" name="Gross" stroke={C.accent} strokeWidth={2} dot={{ r:3 }} activeDot={{ r:5 }} />
+        <Line type="monotone" dataKey="op" name="Operating" stroke={C.accent2} strokeWidth={2} dot={{ r:3 }} activeDot={{ r:5 }} />
+        <Line type="monotone" dataKey="net" name="Net" stroke={C.accent3} strokeWidth={2} dot={{ r:3 }} activeDot={{ r:5 }} />
+      </LineChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 9. SEGMENTATION DONUTS ============================ */
+function SegmentationDonuts({ data }) {
+  const seg = data.revenueSegmentation || {};
+  const byP = (seg.byProduct||[]).filter(s => num(s.revenue)!==null && num(s.revenue)>0);
+  const byG = (seg.byGeography||[]).filter(s => num(s.revenue)!==null && num(s.revenue)>0);
+  const Donut = ({ rows, nameKey }) => {
+    if (!hasData(rows)) return <Empty>Segment revenue breakdown not reported in retrieved filings.</Empty>;
+    const d = rows.map(r => ({ name: r[nameKey]||r.segment||r.region, value: num(r.revenue) }));
+    return (
+      <ResponsiveContainer width="100%" height={200}>
+        <PieChart>
+          <Pie data={d} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={78} paddingAngle={2}>
+            {d.map((e,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]} stroke={C.card} />)}
+          </Pie>
+          <Tooltip {...TIP_STYLE} formatter={v=>fmt$(v)} />
+          <Legend wrapperStyle={{ color:C.tSec, fontSize:11 }} />
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  };
+  return (
+    <Card>
+      <SectionTitle sub={seg.concentrationNote||(seg.asOf?'As of '+seg.asOf:'')}>Revenue Segmentation</SectionTitle>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div><div style={{ color:C.tMut, fontSize:12, textAlign:'center', marginBottom:4 }}>By Product / Segment</div><Donut rows={byP} nameKey="segment" /></div>
+        <div><div style={{ color:C.tMut, fontSize:12, textAlign:'center', marginBottom:4 }}>By Geography</div><Donut rows={byG} nameKey="region" /></div>
+      </div>
+      {seg.concentrationNote && <Source>{seg.concentrationNote}</Source>}
+    </Card>
+  );
+}
+
+/* ============================ 10. FCF WATERFALL ============================ */
+function FCFWaterfallChart({ data }) {
+  const d = (data.cashFlowHistory||[]).map(r => ({ year:r.year, ocf:num(r.operatingCashFlow), capex: num(r.capitalExpenditures)!=null ? -Math.abs(num(r.capitalExpenditures)) : null, fcf:num(r.freeCashFlow) }));
+  if (!hasData(d)) return <ChartCard title="Free Cash Flow" empty="No cash flow data available." />;
+  return (
+    <ChartCard title="Free Cash Flow" sub="FCF = Operating Cash Flow − Capital Expenditures" source="Source: SEC / FMP">
+      <ComposedChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>fmtAbbr(v,'$')} width={56} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=>[fmt$(v),n]} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <ReferenceLine y={0} stroke={C.tMut} />
+        <Bar dataKey="ocf" name="Operating CF" fill={C.up} radius={[4,4,0,0]} />
+        <Bar dataKey="capex" name="CapEx" fill={C.down} radius={[0,0,4,4]} />
+        <Bar dataKey="fcf" name="Free CF" fill={C.accent} radius={[4,4,0,0]} />
+      </ComposedChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 11. EPS TREND ============================ */
+function EPSTrendChart({ data }) {
+  const d = (data.earningsHistory||[]).slice().reverse().map(e => ({ quarter:e.quarter, actual:num(e.epsActual), est:num(e.epsEstimated), result:e.result }));
+  if (!hasData(d)) return <ChartCard title="EPS Trend" empty="No EPS history available." />;
+  return (
+    <ChartCard title="EPS — Actual vs Estimated" source="Actuals: SEC filings · Estimates: FMP">
+      <ComposedChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="quarter" {...AXIS} tickFormatter={q=>String(q).slice(0,7)} />
+        <YAxis {...AXIS} width={44} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=>[fmtRatio(v),n]} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <Bar dataKey="actual" name="bg" fill={C.up} fillOpacity={0.12} isAnimationActive={false} legendType="none" />
+        <Line type="monotone" dataKey="actual" name="EPS Actual" stroke={C.accent} strokeWidth={2} dot={{ r:3, fill:C.accent }} />
+        <Line type="monotone" dataKey="est" name="EPS Est" stroke={C.tMut} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />
+      </ComposedChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 12. REVENUE SURPRISE ============================ */
+function RevenueSurpriseChart({ data }) {
+  const d = (data.earningsHistory||[]).slice().reverse().filter(e=>num(e.revenueActual)!=null).map(e => ({ quarter:e.quarter, actual:num(e.revenueActual), est:num(e.revenueEstimated) }));
+  if (!hasData(d)) return <ChartCard title="Revenue Surprise History" empty="Revenue actual/estimate history not available in retrieved data." />;
+  return (
+    <ChartCard title="Revenue: Actual vs Estimated" source="Source: FMP">
+      <BarChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="quarter" {...AXIS} tickFormatter={q=>String(q).slice(0,7)} />
+        <YAxis {...AXIS} tickFormatter={v=>fmtAbbr(v,'$')} width={56} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=>[fmt$(v),n]} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <Bar dataKey="actual" name="Actual" fill={C.accent} radius={[4,4,0,0]} />
+        <Bar dataKey="est" name="Estimated" fill={C.border} stroke={C.accent} radius={[4,4,0,0]} />
+      </BarChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 13. OPERATING LEVERAGE ============================ */
+function OperatingLeverageChart({ data }) {
+  const d = (data.operatingLeverageHistory||[]).map(r => ({ year:r.year, rev:num(r.revenueGrowth), op:num(r.operatingIncomeGrowth) }));
+  if (!hasData(d.filter(x=>x.rev!=null||x.op!=null))) return <ChartCard title="Operating Leverage" empty="No growth data available." />;
+  return (
+    <ChartCard title="Operating Leverage" sub="When the cyan line exceeds blue, operating expenses are growing slower than revenue." height={220} source="Source: SEC / FMP">
+      <LineChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>v+'%'} width={44} />
+        <Tooltip {...TIP_STYLE} formatter={v=>fmtPct(v)} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <ReferenceLine y={0} stroke={C.tMut} />
+        <Line type="monotone" dataKey="rev" name="Revenue growth" stroke={C.accent} strokeWidth={2} dot={{ r:3 }} />
+        <Line type="monotone" dataKey="op" name="Operating income growth" stroke={C.accent3} strokeWidth={2} dot={{ r:3 }} />
+      </LineChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 14. EARNINGS TABLE ============================ */
+function EarningsTable({ data }) {
+  const d = (data.earningsHistory||[]).slice(0,8);
+  if (!hasData(d)) return null;
+  const th = { textAlign:'left', color:C.tMut, fontSize:11, fontWeight:500, padding:'8px 10px', borderBottom:'1px solid '+C.border, textTransform:'uppercase' };
+  const td = { padding:'9px 10px', fontSize:13, borderBottom:'1px solid '+C.border };
+  return (
+    <Card>
+      <SectionTitle>Earnings History (last 8 quarters)</SectionTitle>
+      <div style={{ overflowX:'auto' }}>
+        <table>
+          <thead><tr>{['Quarter','EPS Actual','EPS Est','Surprise','Rev Actual','Rev Est','Result'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {d.map((e,i)=>(
+              <tr key={i}>
+                <td style={{...td, color:C.tSec}}>{String(e.quarter).slice(0,10)}</td>
+                <td style={{...td}} className="mono">{fmtRatio(e.epsActual)}</td>
+                <td style={{...td, color:C.tSec}} className="mono">{fmtRatio(e.epsEstimated)}</td>
+                <td style={{...td}} className="mono">{e.epsSurprise!=null?(num(e.epsSurprise)>=0?'+':'')+fmtRatio(e.epsSurprise):'—'}</td>
+                <td style={{...td}} className="mono">{fmt$(e.revenueActual)}</td>
+                <td style={{...td, color:C.tSec}} className="mono">{fmt$(e.revenueEstimated)}</td>
+                <td style={{...td, color:C.tSec}}>{({beat:'Beat',met:'Met',missed:'Missed',no_estimate:'No estimate'}[e.result])||'—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Source>Estimates: FMP. Actuals: SEC filings.</Source>
+    </Card>
+  );
+}
+
+/* ============================ 15. FORWARD ESTIMATES ============================ */
+function ForwardEstimatesSection({ data }) {
+  const fe = data.forwardEstimates || {};
+  const q = (fe.quarters||[]).filter(x=>num(x.estimatedRevenue)!=null||num(x.estimatedEPS)!=null);
+  const th = { textAlign:'left', color:C.tMut, fontSize:11, fontWeight:500, padding:'8px 10px', borderBottom:'1px solid '+C.border, textTransform:'uppercase' };
+  const td = { padding:'9px 10px', fontSize:13, borderBottom:'1px solid '+C.border };
+  return (
+    <Card>
+      <SectionTitle>Analyst Consensus Estimates</SectionTitle>
+      <div style={{ background:'rgba(245,158,11,0.08)', border:'1px solid '+C.warn+'55', borderRadius:8, padding:'10px 14px', fontSize:12.5, color:C.warn, marginBottom:14 }}>
+        ⚠ Third-party analyst consensus estimates from Financial Modeling Prep. Not forecasts, guarantees, or investment recommendations. Estimates are frequently revised and actual results may differ materially.
+      </div>
+      {hasData(q) ? (
+        <table>
+          <thead><tr>{['Quarter','Est. Revenue','Est. EPS','# Analysts'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+          <tbody>{q.map((x,i)=>(
+            <tr key={i}><td style={{...td,color:C.tSec}}>{String(x.quarter).slice(0,10)}</td><td style={td} className="mono">{fmt$(x.estimatedRevenue)}</td><td style={td} className="mono">{fmtRatio(x.estimatedEPS)}</td><td style={{...td,color:C.tSec}} className="mono">{fmtInt(x.numberOfAnalysts)}</td></tr>
+          ))}</tbody>
+        </table>
+      ) : <Empty>Forward estimates not available for this company in the retrieved data.</Empty>}
+    </Card>
+  );
+}
+
+/* ============================ 16. EARNINGS CALL ============================ */
+function EarningsCallCard({ data }) {
+  const ec = data.earningsCallSummary || {};
+  return (
+    <Card>
+      <SectionTitle right={ec.transcriptSource && <a href={ec.transcriptSource} target="_blank" rel="noreferrer" style={{fontSize:12}}>Transcript source →</a>}>
+        Latest Earnings Call{ec.quarter?' — '+ec.quarter:''}{ec.mostRecentCallDate?' · '+ec.mostRecentCallDate:''}
+      </SectionTitle>
+      {ec.available ? (
+        <>
+          <div style={{ background:'rgba(245,158,11,0.08)', border:'1px solid '+C.warn+'55', borderRadius:8, padding:'10px 14px', fontSize:12.5, color:C.warn, marginBottom:14 }}>
+            The following reflects management statements from the earnings call. These are not independently verified. Forward-looking statements involve risk.
+          </div>
+          {hasData(ec.managementGuidance) && <div style={{ display:'grid', gap:10, marginBottom:14 }}>
+            {ec.managementGuidance.map((g,i)=>(
+              <div key={i} style={{ background:C.elevated, border:'1px solid '+C.border, borderRadius:8, padding:12 }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span style={{ fontSize:11, padding:'2px 8px', borderRadius:999, background:'rgba(59,130,246,0.15)', color:C.accent }}>{g.topic}</span>
+                  <span style={{ fontSize:11, color:C.tMut }}>{g.speakerRole}</span>
+                </div>
+                <div style={{ fontSize:13.5, color:C.tSec, lineHeight:1.5 }}>{g.statement}</div>
+                {g.isQuantified && g.quantifiedValue && <div className="mono glow-metric" style={{ fontSize:18, color:C.tPri, marginTop:6 }}>{g.quantifiedValue}</div>}
+              </div>
+            ))}
+          </div>}
+          {hasData(ec.keyThemesDiscussed) && <Field label="Key themes"><div className="flex flex-wrap gap-2">{ec.keyThemesDiscussed.map((t,i)=><Pill key={i}>{t}</Pill>)}</div></Field>}
+          {hasData(ec.analystQuestionsTopics) && <div style={{marginTop:12}}><Field label="Analyst questions"><div className="flex flex-wrap gap-2">{ec.analystQuestionsTopics.map((t,i)=><Pill key={i}>{t}</Pill>)}</div></Field></div>}
+        </>
+      ) : (
+        <Empty>Transcript not available from public sources. View at <a href={'https://seekingalpha.com/symbol/'+(data.companyProfile?.ticker||'')+'/earnings/transcripts'} target="_blank" rel="noreferrer">Seeking Alpha</a> or <a href={'https://www.fool.com/earnings-call-transcripts/?symbol='+(data.companyProfile?.ticker||'')} target="_blank" rel="noreferrer">Motley Fool</a>.</Empty>
+      )}
+    </Card>
+  );
+}
+
+/* ============================ 17. BALANCE SHEET COMPOSITION (from raw FMP) ============================ */
+function BalanceSheetCompositionChart({ raw }) {
+  const bal = ((raw&&raw.fmp&&raw.fmp.balance)||[]).slice(0,3).reverse();
+  if (!hasData(bal)) return <ChartCard title="Balance Sheet Composition" height={220} empty="Multi-year balance sheet not available (FMP key required)." />;
+  const d = bal.map(b => ({
+    year: String(b.calendarYear||(b.date||'').slice(0,4)),
+    cash: num(b.cashAndCashEquivalents)||0,
+    otherCurrent: Math.max(0,(num(b.totalCurrentAssets)||0)-(num(b.cashAndCashEquivalents)||0)),
+    nonCurrent: num(b.totalNonCurrentAssets)||0,
+    curLiab: num(b.totalCurrentLiabilities)||0,
+    ltDebt: num(b.longTermDebt)||0,
+    otherLiab: Math.max(0,(num(b.totalLiabilities)||0)-(num(b.totalCurrentLiabilities)||0)-(num(b.longTermDebt)||0)),
+    equity: num(b.totalStockholdersEquity)||0,
+  }));
+  return (
+    <ChartCard title="Balance Sheet Composition" sub="Left stack: assets · Right stack: liabilities + equity" height={240} source="Source: FMP">
+      <BarChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>fmtAbbr(v,'$')} width={56} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=>[fmt$(v),n]} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:11 }} />
+        <Bar dataKey="cash" stackId="a" name="Cash" fill={C.accent3} />
+        <Bar dataKey="otherCurrent" stackId="a" name="Other current" fill={C.accent} />
+        <Bar dataKey="nonCurrent" stackId="a" name="Non-current" fill="#1E40AF" />
+        <Bar dataKey="curLiab" stackId="b" name="Current liab" fill={C.down} />
+        <Bar dataKey="ltDebt" stackId="b" name="LT debt" fill="#F97316" />
+        <Bar dataKey="otherLiab" stackId="b" name="Other liab" fill="#7C3AED" />
+        <Bar dataKey="equity" stackId="b" name="Equity" fill={C.up} />
+      </BarChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 18. DEBT VS CASH ============================ */
+function DebtVsCashChart({ raw, data }) {
+  let d = ((raw&&raw.fmp&&raw.fmp.balance)||[]).slice(0,5).reverse().map(b => ({ year:String(b.calendarYear||(b.date||'').slice(0,4)), debt:num(b.totalDebt), cash:num(b.cashAndCashEquivalents) }));
+  if (!hasData(d.filter(x=>x.debt!=null||x.cash!=null))) return <ChartCard title="Debt vs Cash Over Time" height={220} empty="Debt/cash history not available." />;
+  return (
+    <ChartCard title="Debt vs Cash Over Time" sub="When cash area exceeds debt area, the company holds a net cash position." height={220} source="Source: FMP">
+      <AreaChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>fmtAbbr(v,'$')} width={56} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=>[fmt$(v),n]} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <Area type="monotone" dataKey="debt" name="Total Debt" stroke={C.down} fill={C.down} fillOpacity={0.15} strokeWidth={2} />
+        <Area type="monotone" dataKey="cash" name="Cash" stroke={C.up} fill={C.up} fillOpacity={0.15} strokeWidth={2} />
+      </AreaChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 19. DEBT STRUCTURE ============================ */
+function DebtStructureCard({ data }) {
+  const dm = data.debtMaturity || {};
+  const total = num(dm.totalDebt), st = num(dm.shortTermDebt), lt = num(dm.longTermDebt);
+  const nd = data.keyCalculatedMetrics?.netDebt || {};
+  const netDebtNeg = num(nd.value)!==null && num(nd.value)<0;
+  const stPct = total ? (st||0)/total*100 : null;
+  return (
+    <Card>
+      <SectionTitle>Debt Structure</SectionTitle>
+      <div style={{ marginBottom:16 }}>
+        <div style={{ color:C.tMut, fontSize:11, marginBottom:6 }}>MATURITY SPLIT</div>
+        {total ? (
+          <>
+            <div style={{ display:'flex', height:24, borderRadius:6, overflow:'hidden', border:'1px solid '+C.border }}>
+              <div style={{ width:(stPct||0)+'%', background:C.warn }} title="Short-term" />
+              <div style={{ width:(100-(stPct||0))+'%', background:C.accent }} title="Long-term" />
+            </div>
+            <div className="flex justify-between mt-1" style={{ fontSize:11, color:C.tSec }}>
+              <span className="mono">Short-term {fmt$(st)} ({stPct!=null?stPct.toFixed(0):'—'}%)</span>
+              <span className="mono">Long-term {fmt$(lt)}</span>
+            </div>
+            <div style={{ fontSize:11, color:C.tMut, marginTop:6 }}>Short-term debt ({fmt$(st)}) is due within 12 months. Full maturity schedule in 10-K Notes → {data.companyProfile?.secEdgarUrl && <a href={data.companyProfile.secEdgarUrl} target="_blank" rel="noreferrer">SEC EDGAR</a>}</div>
+          </>
+        ) : <Empty>Debt maturity not available.</Empty>}
+      </div>
+      <div style={{ background:C.elevated, border:'1px solid '+C.border, borderRadius:8, padding:14, marginBottom:14 }}>
+        <div style={{ color:C.tMut, fontSize:11 }}>NET {netDebtNeg?'CASH':'DEBT'}</div>
+        <div className="mono glow-metric" style={{ fontSize:24, color: netDebtNeg?C.up:C.tPri, margin:'4px 0' }}>{netDebtNeg?fmt$(Math.abs(num(nd.value))):fmt$(nd.value)}</div>
+        <div className="mono" style={{ fontSize:11, color:C.tMut }}>Total Debt {fmt$(nd.totalDebt)} − Cash {fmt$(nd.cash)} = {netDebtNeg?'−':''}{fmt$(Math.abs(num(nd.value)||0))}</div>
+      </div>
+      {dm.interestExpense!=null && <div style={{ fontSize:12.5, color:C.tSec }}>Interest expense of {fmt$(dm.interestExpense)} in {(dm.asOf||'').slice(0,4)} on total debt of {fmt$(total)} = implied average rate of <span className="mono" style={{color:C.tPri}}>{pct100(dm.impliedAverageInterestRate)}</span></div>}
+    </Card>
+  );
+}
+
+/* ============================ 20. CAPEX & R&D INTENSITY ============================ */
+function CapexRdIntensityChart({ data }) {
+  const d = (data.capexAndRdHistory||[]).map(r => ({ year:r.year, capex:num(r.capexAsPercentRevenue), rd:num(r.rdAsPercentRevenue) }));
+  const hasRd = d.some(x => x.rd!=null);
+  if (!hasData(d.filter(x=>x.capex!=null||x.rd!=null))) return <ChartCard title="CapEx & R&D Intensity" height={220} empty="CapEx/R&D intensity not available." />;
+  return (
+    <ChartCard title="CapEx & R&D Intensity (% of revenue)" sub={hasRd?'CapEx = reinvestment in physical assets · R&D = investment in future products':'R&D not reported separately'} height={220} source="Source: SEC / FMP">
+      <LineChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>v+'%'} width={44} />
+        <Tooltip {...TIP_STYLE} formatter={v=>fmtPct(v)} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <Line type="monotone" dataKey="capex" name="CapEx %" stroke={C.accent3} strokeWidth={2} dot={{ r:3 }} />
+        {hasRd && <Line type="monotone" dataKey="rd" name="R&D %" stroke={C.accent2} strokeWidth={2} dot={{ r:3 }} />}
+      </LineChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 21. SHARE COUNT HISTORY ============================ */
+function SharesHistoryChart({ data }) {
+  const d = (data.sharesHistory||[]).map(r => ({ year:r.year, basic:num(r.basicSharesOutstanding), diluted:num(r.dilutedSharesOutstanding) }));
+  if (!hasData(d.filter(x=>x.basic!=null||x.diluted!=null))) return <ChartCard title="Share Count / Dilution" height={220} empty="Share count history not available." />;
+  return (
+    <ChartCard title="Share Count History / Dilution" sub="Declining count indicates buybacks. Rising count indicates issuance or stock-based comp." height={220} source="Source: SEC / FMP">
+      <LineChart data={d}>
+        <CartesianGrid {...GRID} />
+        <XAxis dataKey="year" {...AXIS} />
+        <YAxis {...AXIS} tickFormatter={v=>fmtAbbr(v)} width={50} />
+        <Tooltip {...TIP_STYLE} formatter={(v,n)=>[fmtInt(v),n]} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+        <Line type="monotone" dataKey="basic" name="Basic shares" stroke={C.accent} strokeWidth={2} dot={{ r:3 }} />
+        <Line type="monotone" dataKey="diluted" name="Diluted shares" stroke={C.accent2} strokeWidth={2} strokeDasharray="5 5" dot={{ r:3 }} />
+      </LineChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 22. RETURN METRICS RADAR ============================ */
+function ReturnMetricsRadar({ data, second }) {
+  const rm = data.returnMetrics||{}, prof=(data.profitabilityHistory||[]).slice(-1)[0]||{};
+  const build = (r, p) => ([
+    { axis:'ROE', v: Math.max(0, num(r.roe)||0) },
+    { axis:'ROA', v: Math.max(0, num(r.roa)||0) },
+    { axis:'ROIC', v: Math.max(0, num(r.roic)||0) },
+    { axis:'Gross M', v: Math.max(0, num(p.grossMargin)||0) },
+    { axis:'Op M', v: Math.max(0, num(p.operatingMargin)||0) },
+    { axis:'Net M', v: Math.max(0, num(p.netMargin)||0) },
+  ]);
+  const a = build(rm, prof);
+  const d = a.map((row,i) => ({ axis:row.axis, A:row.v, B: second ? build(second.returnMetrics||{}, (second.profitabilityHistory||[]).slice(-1)[0]||{})[i].v : null }));
+  return (
+    <ChartCard title="Return & Margin Profile" sub="Values shown as raw percentages for visual comparison. See cards for exact figures." height={280}>
+      <RadarChart data={d} outerRadius="72%">
+        <PolarGrid stroke={C.border} />
+        <PolarAngleAxis dataKey="axis" tick={{ fill:C.tSec, fontSize:11 }} />
+        <PolarRadiusAxis tick={{ fill:C.tMut, fontSize:9 }} stroke={C.border} />
+        <Radar name={data.companyProfile?.ticker||'Company'} dataKey="A" stroke={C.accent} fill={C.accent} fillOpacity={0.2} />
+        {second && <Radar name={second.companyProfile?.ticker||'B'} dataKey="B" stroke={C.accent2} fill={C.accent2} fillOpacity={0.2} />}
+        <Tooltip {...TIP_STYLE} formatter={v=>fmtPct(v)} />
+        <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+      </RadarChart>
+    </ChartCard>
+  );
+}
+
+/* ============================ 23. RETURN METRICS CARD ============================ */
+function ReturnMetricsCard({ data }) {
+  const rm = data.returnMetrics || {};
+  const rows = [['ROE', pct100(rm.roe)], ['ROA', pct100(rm.roa)], ['ROIC', pct100(rm.roic)], ['Interest Coverage', fmtRatio(rm.interestCoverage)], ['Effective Tax Rate', pct100(rm.effectiveTaxRate)]];
+  return (
+    <Card>
+      <SectionTitle sub={rm.asOf?'As of '+rm.asOf:''}>Return Metrics</SectionTitle>
+      <div className="grid grid-cols-2 gap-3">
+        {rows.map(([l,v])=>(
+          <div key={l} style={{ background:C.elevated, border:'1px solid '+C.border, borderRadius:10, padding:14 }}>
+            <div className="flex items-center" style={{ color:C.tSec, fontSize:12 }}>{l}<Info text={METRIC_TOOLTIPS[l]} /></div>
+            <div className="mono" style={{ fontSize:22, fontWeight:600, marginTop:4 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <Source>{rm.source||'Source: FMP'}</Source>
+    </Card>
+  );
+}
+
+/* ============================ 24. KEY EVENTS TIMELINE ============================ */
+function KeyEventsTimeline({ data }) {
+  const [filter, setFilter] = useState('All');
+  const events = (data.keyEvents||[]).filter(e=>e.date).sort((a,b)=>b.date.localeCompare(a.date));
+  if (!hasData(events)) return null;
+  const groups = { All:()=>true, Earnings:e=>e.eventType==='earnings', Acquisitions:e=>e.eventType==='acquisition', Leadership:e=>e.eventType==='leadership_change', Regulatory:e=>['regulatory','legal'].includes(e.eventType), Filings:e=>e.eventType==='filing_8K' };
+  const filtered = events.filter(groups[filter]);
+  const colorOf = (t)=>({ earnings:C.accent, acquisition:C.accent2, leadership_change:C.warn, regulatory:C.down, legal:C.down, product_launch:C.accent3, filing_8K:C.tMut }[t]||C.tMut);
+  const mat = (m)=>({ high:'High impact', medium:'Notable', low:'Routine' }[m]||'');
+  return (
+    <Card>
+      <SectionTitle right={<div className="flex gap-2 flex-wrap">{Object.keys(groups).map(g=><button key={g} className={'pill '+(filter===g?'pill-active':'')} onClick={()=>setFilter(g)}>{g}</button>)}</div>}>Key Events Timeline</SectionTitle>
+      <div style={{ position:'relative', paddingLeft:18 }}>
+        <div style={{ position:'absolute', left:5, top:6, bottom:6, width:2, background:C.border }} />
+        {filtered.map((e,i)=>(
+          <div key={i} style={{ position:'relative', paddingBottom:16 }}>
+            <div style={{ position:'absolute', left:-17, top:4, width:10, height:10, borderRadius:'50%', background:colorOf(e.eventType), border:'2px solid '+C.card }} />
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="mono" style={{ color:C.tMut, fontSize:12 }}>{e.date}</span>
+              <span style={{ fontWeight:600, fontSize:13.5 }}>{e.title}</span>
+              <span style={{ fontSize:10, padding:'1px 7px', borderRadius:999, border:'1px solid '+C.border, color:C.tMut }}>{mat(e.materialityFlag)}</span>
+            </div>
+            <div style={{ color:C.tSec, fontSize:13, marginTop:2 }}>{e.description} {e.sourceUrl && <a href={e.sourceUrl} target="_blank" rel="noreferrer" style={{fontSize:12}}>· source</a>}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ============================ 25. RECENT FILINGS ============================ */
+function RecentFilingsTable({ data }) {
+  const f = (data.recentFilings||[]).slice(0,10);
+  if (!hasData(f)) return null;
+  const th = { textAlign:'left', color:C.tMut, fontSize:11, fontWeight:500, padding:'8px 10px', borderBottom:'1px solid '+C.border, textTransform:'uppercase' };
+  const td = { padding:'9px 10px', fontSize:13, borderBottom:'1px solid '+C.border };
+  return (
+    <Card>
+      <SectionTitle>Recent SEC Filings</SectionTitle>
+      <div style={{ overflowX:'auto' }}>
+        <table>
+          <thead><tr>{['Type','Date','Description','Link'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+          <tbody>{f.map((x,i)=>(
+            <tr key={i}>
+              <td style={td}><span className="mono" style={{color:C.accent}}>{x.type}</span></td>
+              <td style={{...td,color:C.tSec}} className="mono">{x.date}</td>
+              <td style={{...td,color:C.tSec}}>{x.description}</td>
+              <td style={td}>{x.url?<a href={x.url} target="_blank" rel="noreferrer">View →</a>:'—'}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+/* ============================ 26. INVESTOR RELATIONS ============================ */
+function InvestorRelationsPanel({ data, raw }) {
+  const p = data.companyProfile || {};
+  const cik = (raw&&raw.sec&&raw.sec.cik) || '';
+  const base = 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK='+cik;
+  const link = (t,c)=> base+'&type='+t+(c?'&count='+c:'');
+  return (
+    <Card>
+      <SectionTitle>Investor Relations</SectionTitle>
+      {p.irWebsiteUrl && <a href={p.irWebsiteUrl.startsWith('http')?p.irWebsiteUrl:'https://'+p.irWebsiteUrl} target="_blank" rel="noreferrer" style={{ display:'block', marginBottom:12 }}>Official Investor Relations page →</a>}
+      {cik && <div className="grid grid-cols-2 gap-2" style={{ fontSize:13, marginBottom:12 }}>
+        <a href={link('10-K',1)} target="_blank" rel="noreferrer">Latest 10-K →</a>
+        <a href={link('10-Q',1)} target="_blank" rel="noreferrer">Latest 10-Q →</a>
+        <a href={link('8-K',1)} target="_blank" rel="noreferrer">Latest 8-K →</a>
+        <a href={link('DEF+14A',1)} target="_blank" rel="noreferrer">Proxy (DEF 14A) →</a>
+        <a href={link('',40)} target="_blank" rel="noreferrer">All filings →</a>
+      </div>}
+      {data.currentMarketData?.nextEarningsDate && <div style={{ background:'rgba(245,158,11,0.06)', border:'1px solid '+C.warn+'55', borderRadius:8, padding:'8px 12px', fontSize:13, color:C.warn, marginBottom:12 }}>Next earnings date: {data.currentMarketData.nextEarningsDate}</div>}
+      <div style={{ fontSize:12, color:C.tMut, lineHeight:1.5 }}>Some companies publish segment KPIs, investor presentations, and supplemental financial packages on their IR page that do not appear in SEC filings. For the most complete picture, review the official IR page linked above.</div>
+    </Card>
+  );
+}
+
+/* ============================ 27. DATA QUALITY FLAGS ============================ */
+function DataQualityFlags({ data }) {
+  const flags = (data.dataQualityFlags||[]).filter(Boolean);
+  if (!hasData(flags)) return null;
+  return (
+    <div style={{ background:'rgba(245,158,11,0.08)', border:'1px solid '+C.warn+'55', borderRadius:10, padding:'12px 16px', fontSize:13, color:C.warn }}>
+      ⚠ Data notes: {flags.join(' · ')}
+    </div>
+  );
+}
+
+/* ============================ 28. DISCLAIMER ============================ */
+function Disclaimer({ data }) {
+  return (
+    <div style={{ border:'1px solid '+C.border, borderRadius:10, padding:'16px 18px', fontSize:12, color:C.tMut, lineHeight:1.6, marginTop:8 }}>
+      {data.disclaimer}
+    </div>
+  );
+}
+
+/* ============================ SINGLE DASHBOARD ============================ */
+function Dashboard({ result, onCompare }) {
+  const { data, raw } = result;
+  return (
+    <div className="fade-in" style={{ display:'grid', gap:16 }}>
+      <CompanyHeader data={data} onCompare={onCompare} />
+      <DataQualityFlags data={data} />
+      <StockHeroChart data={data} />
+      <EventsDensityTimeline data={data} />
+      <ValuationMetricsRow data={data} />
+      <KeyCalculatedMetrics data={data} />
+      <CompanyOverviewCard data={data} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <RevenueGrowthChart data={data} />
+        <MarginTrendsChart data={data} />
+      </div>
+      <SegmentationDonuts data={data} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <FCFWaterfallChart data={data} />
+        <EPSTrendChart data={data} />
+        <RevenueSurpriseChart data={data} />
+        <OperatingLeverageChart data={data} />
+      </div>
+      <EarningsTable data={data} />
+      <ForwardEstimatesSection data={data} />
+      <EarningsCallCard data={data} />
+      <BalanceSheetCompositionChart raw={raw} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <DebtVsCashChart raw={raw} data={data} />
+        <DebtStructureCard data={data} />
+        <CapexRdIntensityChart data={data} />
+        <SharesHistoryChart data={data} />
+        <ReturnMetricsRadar data={data} />
+        <ReturnMetricsCard data={data} />
+      </div>
+      <KeyEventsTimeline data={data} />
+      <RecentFilingsTable data={data} />
+      <InvestorRelationsPanel data={data} raw={raw} />
+      <Disclaimer data={data} />
+    </div>
+  );
+}
+
+/* ============================ COMPARISON LAYOUT ============================ */
+function ComparisonLayout({ results }) {
+  const [A, B] = results;
+  const da = A.data, db = B.data;
+  const [normalize, setNormalize] = useState(true);
+  const [view, setView] = useState('compare');
+  const ta = da.companyProfile?.ticker||'A', tb = db.companyProfile?.ticker||'B';
+
+  const rows = [
+    ['Price', da.currentMarketData?.price, db.currentMarketData?.price, false, fmtMoney],
+    ['Market Cap', da.currentMarketData?.marketCap, db.currentMarketData?.marketCap, false, fmt$],
+    ['Revenue (latest)', lastRev(da), lastRev(db), false, fmt$],
+    ['Net Margin %', lastNetMargin(da), lastNetMargin(db), true, pct100],
+    ['Revenue CAGR 5yr %', da.keyCalculatedMetrics?.revenueCAGR5yr?.value, db.keyCalculatedMetrics?.revenueCAGR5yr?.value, true, pct100],
+    ['P/E (TTM)', da.valuationMetrics?.peRatioTTM, db.valuationMetrics?.peRatioTTM, false, fmtRatio],
+    ['ROE %', da.returnMetrics?.roe, db.returnMetrics?.roe, true, pct100],
+    ['Net Debt', da.keyCalculatedMetrics?.netDebt?.value, db.keyCalculatedMetrics?.netDebt?.value, false, fmt$],
+  ];
+  const fyA = da.companyProfile?.fiscalYearEnd, fyB = db.companyProfile?.fiscalYearEnd;
+  const summary = buildComparisonSummary(da, db);
+
+  // overlay price (% normalized)
+  const priceData = buildPriceOverlay(da.priceHistory, db.priceHistory, normalize, ta, tb);
+  const revData = mergeByYear(da.revenueHistory, db.revenueHistory, 'revenue', ta, tb);
+  const marginData = mergeByYear(da.profitabilityHistory, db.profitabilityHistory, 'netMargin', ta, tb);
+
+  const th = { textAlign:'left', color:C.tMut, fontSize:11, fontWeight:500, padding:'10px', borderBottom:'1px solid '+C.border, textTransform:'uppercase' };
+  const td = { padding:'10px', fontSize:14, borderBottom:'1px solid '+C.border };
+
+  if (view === 'A') return <BackWrap onBack={()=>setView('compare')} label={'← Back to comparison'}><Dashboard result={A} /></BackWrap>;
+  if (view === 'B') return <BackWrap onBack={()=>setView('compare')} label={'← Back to comparison'}><Dashboard result={B} /></BackWrap>;
+
+  return (
+    <div className="fade-in" style={{ display:'grid', gap:16 }}>
+      <div className="grid grid-cols-2 gap-4">
+        {[da, db].map((d,i)=>(
+          <Card key={i} variant="elevated">
+            <div className="flex items-center gap-2"><h2 style={{ fontSize:20, fontWeight:700 }}>{d.companyProfile?.legalName}</h2><span className="ticker">{d.companyProfile?.ticker}</span></div>
+            <div className="mono glow-price" style={{ fontSize:26, fontWeight:700, marginTop:6 }}>{fmtMoney(d.currentMarketData?.price)}</div>
+            <div style={{ color:C.tSec, fontSize:13, marginTop:4 }}>Mkt Cap <span className="mono">{fmt$(d.currentMarketData?.marketCap)}</span></div>
+          </Card>
+        ))}
+      </div>
+
+      {(fyA && fyB && fyA !== fyB) && <div style={{ background:'rgba(245,158,11,0.08)', border:'1px solid '+C.warn+'55', borderRadius:10, padding:'10px 14px', fontSize:13, color:C.warn }}>Note: {ta}'s fiscal year ends {fyA}; {tb}'s ends {fyB}. Annual figures may not cover identical calendar periods.</div>}
+
+      <Card>
+        <SectionTitle sub="Δ is purely mathematical — no judgment on which is preferable.">Metric Comparison</SectionTitle>
+        <table>
+          <thead><tr><th style={th}>Metric</th><th style={th}>{ta}</th><th style={th}>{tb}</th><th style={th}>Δ</th></tr></thead>
+          <tbody>{rows.map(([label,a,b,isPct,fmt],i)=>(
+            <tr key={i}>
+              <td style={{...td,color:C.tSec}}>{label}</td>
+              <td style={td} className="mono">{isPct?fmt(a):fmt(a)}</td>
+              <td style={td} className="mono">{isPct?fmt(b):fmt(b)}</td>
+              <td style={{...td,color:C.tPri}} className="mono">{deltaText(isPct?(Math.abs(num(a))<=1?num(a)*100:num(a)):a, isPct?(Math.abs(num(b))<=1?num(b)*100:num(b)):b, isPct)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </Card>
+
+      <Card>
+        <SectionTitle right={<button className={'pill '+(normalize?'pill-active':'')} onClick={()=>setNormalize(!normalize)}>Show as % change from start</button>}>Stock Price</SectionTitle>
+        <div style={{ height:300 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={priceData}>
+              <CartesianGrid {...GRID} />
+              <XAxis dataKey="date" {...AXIS} tickFormatter={d=>String(d).slice(0,7)} minTickGap={40} />
+              <YAxis {...AXIS} tickFormatter={v=> normalize? v.toFixed(0)+'%' : '$'+v.toFixed(0)} width={56} />
+              <Tooltip {...TIP_STYLE} formatter={v=> normalize? fmtPct(v) : fmtMoney(v)} />
+              <Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+              <Area type="monotone" dataKey="a" name={ta} stroke={C.accent} fill={C.accent} fillOpacity={0.12} strokeWidth={2} />
+              <Area type="monotone" dataKey="b" name={tb} stroke={C.accent2} fill={C.accent2} fillOpacity={0.12} strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="Revenue" source="Source: SEC / FMP">
+          <BarChart data={revData}>
+            <CartesianGrid {...GRID} /><XAxis dataKey="year" {...AXIS} /><YAxis {...AXIS} tickFormatter={v=>fmtAbbr(v,'$')} width={56} />
+            <Tooltip {...TIP_STYLE} formatter={v=>fmt$(v)} /><Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+            <Bar dataKey="a" name={ta} fill={C.accent} radius={[4,4,0,0]} /><Bar dataKey="b" name={tb} fill={C.accent2} radius={[4,4,0,0]} />
+          </BarChart>
+        </ChartCard>
+        <ChartCard title="Net Margin %" source="Source: SEC / FMP">
+          <LineChart data={marginData}>
+            <CartesianGrid {...GRID} /><XAxis dataKey="year" {...AXIS} /><YAxis {...AXIS} tickFormatter={v=>v+'%'} width={44} />
+            <Tooltip {...TIP_STYLE} formatter={v=>fmtPct(v)} /><Legend wrapperStyle={{ color:C.tSec, fontSize:12 }} />
+            <Line type="monotone" dataKey="a" name={ta} stroke={C.accent} strokeWidth={2} dot={{r:3}} /><Line type="monotone" dataKey="b" name={tb} stroke={C.accent2} strokeWidth={2} dot={{r:3}} />
+          </LineChart>
+        </ChartCard>
+      </div>
+
+      <ReturnMetricsRadar data={da} second={db} />
+
+      <Card>
+        <SectionTitle>Comparison Summary</SectionTitle>
+        <p style={{ color:C.tSec, fontSize:14, lineHeight:1.7 }}>{summary}</p>
+      </Card>
+
+      <div className="flex gap-3">
+        <button onClick={()=>setView('A')} style={{ flex:1, background:C.elevated, border:'1px solid '+C.border, borderRadius:10, padding:'12px', color:C.tPri, cursor:'pointer' }}>View full {ta} dashboard →</button>
+        <button onClick={()=>setView('B')} style={{ flex:1, background:C.elevated, border:'1px solid '+C.border, borderRadius:10, padding:'12px', color:C.tPri, cursor:'pointer' }}>View full {tb} dashboard →</button>
+      </div>
+      <Disclaimer data={da} />
+    </div>
+  );
+}
+function BackWrap({ onBack, label, children }) { return <div><button onClick={onBack} style={{ background:'none', border:'none', color:C.accent3, cursor:'pointer', marginBottom:12, fontSize:14 }}>{label}</button>{children}</div>; }
+function lastRev(d){ const h=d.revenueHistory||[]; return h.length?num(h[h.length-1].revenue):null; }
+function lastNetMargin(d){ const h=d.profitabilityHistory||[]; return h.length?num(h[h.length-1].netMargin):null; }
+function buildPriceOverlay(ah, bh, normalize, ta, tb) {
+  ah=ah||[]; bh=bh||[];
+  const mapA={}, mapB={};
+  ah.forEach(p=>mapA[p.date.slice(0,7)]=p.price); bh.forEach(p=>mapB[p.date.slice(0,7)]=p.price);
+  const dates=[...new Set([...Object.keys(mapA),...Object.keys(mapB)])].sort();
+  const a0=ah[0]?.price, b0=bh[0]?.price;
+  return dates.map(d=>({ date:d, a: mapA[d]!=null?(normalize&&a0?(mapA[d]-a0)/a0*100:mapA[d]):null, b: mapB[d]!=null?(normalize&&b0?(mapB[d]-b0)/b0*100:mapB[d]):null }));
+}
+function mergeByYear(ah, bh, key, ta, tb) {
+  ah=ah||[]; bh=bh||[];
+  const mapA={}, mapB={};
+  ah.forEach(r=>mapA[r.year]=num(r[key])); bh.forEach(r=>mapB[r.year]=num(r[key]));
+  const years=[...new Set([...Object.keys(mapA),...Object.keys(mapB)])].sort();
+  return years.map(y=>({ year:y, a:mapA[y]!=null?(key==='netMargin'&&Math.abs(mapA[y])<=1?mapA[y]*100:mapA[y]):null, b:mapB[y]!=null?(key==='netMargin'&&Math.abs(mapB[y])<=1?mapB[y]*100:mapB[y]):null }));
+}
+function buildComparisonSummary(da, db) {
+  const ta=da.companyProfile?.legalName||'Company A', tb=db.companyProfile?.legalName||'Company B';
+  const cagrA=pct100(da.keyCalculatedMetrics?.revenueCAGR5yr?.value), cagrB=pct100(db.keyCalculatedMetrics?.revenueCAGR5yr?.value);
+  const ltA=fmt$(da.balanceSheetSnapshot?.longTermDebt), ltB=fmt$(db.balanceSheetSnapshot?.longTermDebt);
+  const nmA=avgNetMargin(da), nmB=avgNetMargin(db);
+  return 'Over the available fiscal history, '+ta+' grew revenue at a 5-year CAGR of '+cagrA+' versus '+tb+'’s '+cagrB+'. '
+    +ta+' carries '+ltA+' in long-term debt versus '+tb+'’s '+ltB+'. '
+    +'Net margins averaged '+nmA+' versus '+nmB+' respectively. All figures are drawn directly from SEC filings, Alpha Vantage, and Financial Modeling Prep; no judgment is expressed about which company represents a preferable investment.';
+}
+function avgNetMargin(d){ const h=(d.profitabilityHistory||[]).map(r=>num(r.netMargin)).filter(x=>x!=null); if(!h.length) return '—'; const v=h.reduce((s,x)=>s+x,0)/h.length; return pct100(v); }
+
+/* ============================ APP ============================ */
+function App() {
+  const [keys, setKeys] = useState(KEYS.get());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [steps, setSteps] = useState({});
+  const [parseDetail, setParseDetail] = useState('');
+  const [results, setResults] = useState(null);
+  const [mode, setMode] = useState('single');
+  const [error, setError] = useState(null);
+  const [clarify, setClarify] = useState(null);
+
+  const setStep = (k, s) => setSteps(prev => ({ ...prev, [k]: s }));
+
+  const runSearch = useCallback(async (query, forceMode) => {
+    setError(null); setClarify(null); setResults(null); setBusy(true); setSteps({}); setParseDetail('');
+    try {
+      setStep('parse', 'run');
+      const parsed = await parseQuery(query, keys.anthropic);
+      let companies = parsed.companies || [];
+      let m = forceMode || parsed.mode || 'single';
+      if (m === 'single') companies = companies.slice(0,1);
+      setParseDetail(companies.map(c=>c.name).join(' vs '));
+      setStep('parse', 'ok');
+
+      if (parsed.clarificationNeeded && !forceMode && companies.length === 2) {
+        setClarify({ prompt: parsed.clarificationPrompt || 'Did you mean to compare these two companies?', query });
+        setBusy(false); return;
+      }
+      if (!companies.length) throw new Error('NOTFOUND');
+
+      const out = [];
+      for (const c of companies) {
+        const r = await fetchCompany(c, keys, setStep);
+        if (r.sec && r.sec.error === 'CIK not found' && !r.data.currentMarketData?.price) {
+          // likely private / not found
+        }
+        out.push(r);
+      }
+      // detect not found / private
+      const anyData = out.some(r => r.data.companyProfile?.legalName || r.data.currentMarketData?.price);
+      if (!anyData) throw new Error('NOTFOUND');
+
+      setMode(m === 'comparison' && out.length === 2 ? 'comparison' : 'single');
+      setResults(out);
+    } catch (e) {
+      console.error(e);
+      const msg = String(e.message||e);
+      if (msg.includes('NOTFOUND')) setError("We couldn't find a public company matching that name. Try the stock ticker directly (e.g. AAPL, MSFT).");
+      else if (msg.includes('Claude API 401') || msg.includes('authentication')) setError('Anthropic API key rejected. Check your key in Settings.');
+      else setError('Something went wrong: '+msg);
+    } finally {
+      setBusy(false);
+    }
+  }, [keys]);
+
+  const noKeys = !keys.anthropic && !keys.alphavantage && !keys.fmp;
+
+  return (
+    <div style={{ minHeight:'100vh', maxWidth:1280, margin:'0 auto', padding:'24px 20px 80px' }}>
+      <SettingsPanel open={settingsOpen} onClose={()=>setSettingsOpen(false)} keys={keys} setKeys={setKeys} />
+      {/* top bar */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={()=>{ setResults(null); setError(null); }}>
+          <div style={{ width:34, height:34, borderRadius:9, background:'linear-gradient(135deg,'+C.accent+','+C.accent2+')', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:13, boxShadow:'0 0 16px rgba(59,130,246,.4)' }}>FL</div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:18, letterSpacing:-0.3 }}>Financial Lens</div>
+            <div style={{ fontSize:11, color:C.tMut }}>Verified financial data — sourced, organized, no opinion</div>
+          </div>
+        </div>
+        <button onClick={()=>setSettingsOpen(true)} style={{ background:C.card, border:'1px solid '+C.border, borderRadius:10, width:40, height:40, color:C.tSec, cursor:'pointer', fontSize:18 }} title="Settings">⚙</button>
+      </div>
+
+      <div style={{ maxWidth: results||busy ? '100%' : 720, margin: results||busy?'0':'8vh auto 0' }}>
+        {!results && !busy && (
+          <div className="text-center mb-6 fade-in">
+            <h1 style={{ fontSize:34, fontWeight:700, letterSpacing:-0.5 }}>Search any public company.</h1>
+            <p style={{ color:C.tSec, fontSize:15, marginTop:8 }}>Live financial data from SEC EDGAR, Alpha Vantage & Financial Modeling Prep — synthesized, sourced, and presented without opinion.</p>
+          </div>
+        )}
+        <SearchBar onSearch={(q)=>runSearch(q)} busy={busy} />
+        {!results && !busy && (
+          <div className="flex flex-wrap gap-2 mt-3 justify-center">
+            {['Apple','NVDA','Apple vs Microsoft','Berkshire Hathaway','Rivian','ACAD'].map(s=>
+              <button key={s} className="pill" onClick={()=>runSearch(s)}>{s}</button>)}
+          </div>
+        )}
+        {noKeys && !results && !busy && (
+          <div style={{ background:'rgba(59,130,246,0.06)', border:'1px solid '+C.border, borderRadius:10, padding:'12px 16px', fontSize:13, color:C.tSec, marginTop:16 }}>
+            Add API keys in <button onClick={()=>setSettingsOpen(true)} style={{color:C.accent,background:'none',border:'none',cursor:'pointer',padding:0,textDecoration:'underline'}}>Settings</button> to unlock full market data, AI synthesis, and financial statements. SEC EDGAR data works with no key.
+          </div>
+        )}
+      </div>
+
+      {clarify && (
+        <Card variant="elevated" style={{ maxWidth:520, margin:'24px auto' }}>
+          <div style={{ fontSize:15, marginBottom:14 }}>{clarify.prompt}</div>
+          <div className="flex gap-3">
+            <button onClick={()=>runSearch(clarify.query,'comparison')} style={{ background:C.accent, color:'#fff', border:'none', borderRadius:8, padding:'8px 20px', cursor:'pointer' }}>Yes, compare</button>
+            <button onClick={()=>runSearch(clarify.query,'single')} style={{ background:C.elevated, color:C.tPri, border:'1px solid '+C.border, borderRadius:8, padding:'8px 20px', cursor:'pointer' }}>No, single company</button>
+          </div>
+        </Card>
+      )}
+
+      {busy && <LoadingState steps={steps} detail={parseDetail} />}
+
+      {error && !busy && (
+        <Card style={{ maxWidth:560, margin:'32px auto', borderColor:C.warn+'55' }}>
+          <div style={{ color:C.warn, fontSize:14, lineHeight:1.6 }}>{error}</div>
+        </Card>
+      )}
+
+      {results && !busy && (
+        <div style={{ marginTop:20 }}>
+          {mode === 'comparison' ? <ComparisonLayout results={results} /> : <Dashboard result={results[0]} onCompare={()=>{ setResults(null); }} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
