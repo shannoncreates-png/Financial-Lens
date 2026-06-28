@@ -4,38 +4,52 @@ Search any public company (or compare two) and get a structured, sourced, **data
 synthesis of its financial state — pulled live from public financial data sources.
 No recommendations, no buy/sell signals, no AI speculation. Every number traces to a source.
 
-Single-file app: open `index.html` in a browser. No build step, no backend.
-React + Tailwind + Recharts + Babel are loaded from CDNs.
+The frontend is a single `index.html` (React + Tailwind + Recharts + Babel from CDNs, no
+build step). A tiny optional serverless proxy (`api/proxy.js`) holds the API keys so that
+**end users need no keys of their own.**
 
-## Running it
+## Recommended: deploy to Vercel (users need zero keys)
 
-Just open the file:
+The bundled `api/proxy.js` keeps your API key server-side. Deploy the repo to Vercel and
+everyone who visits gets full live data with no setup.
+
+1. Get a free **Financial Modeling Prep** key → https://site.financialmodelingprep.com/ (the
+   free tier covers profile, quote, statements, ratios, and price history).
+2. Import this repo at https://vercel.com/new (no build settings needed — it's static + one function).
+3. In **Project → Settings → Environment Variables**, add:
+   - `FMP_API_KEY` — **required**
+   - `ALPHAVANTAGE_API_KEY` — *optional*, adds adjusted price history / extra market data
+   - `ANTHROPIC_API_KEY` — *optional*, turns on AI query parsing + the richer narrative
+     synthesis for every visitor (you pay for those tokens; without it the app uses a free,
+     deterministic data mapping that still fills the whole dashboard)
+4. Deploy. The frontend auto-detects the proxy (`/api/proxy`) and shows
+   "● Data backend connected — no API key needed."
+
+Responses are edge-cached (`s-maxage`), so popular tickers don't repeatedly spend your
+free-tier quota. (Cloudflare Pages + Functions works the same way if you prefer it.)
+
+## Running locally without the proxy
+
+You can also open it as a pure static file and paste your own keys in the ⚙ Settings panel
+(saved to `localStorage`):
 
 ```
-# directly
-start index.html        # Windows
-
-# or serve it (any static server works)
-python -m http.server 4178
-# then visit http://localhost:4178
+python -m http.server 4178   # then visit http://localhost:4178
 ```
-
-## API keys (entered in the ⚙ Settings panel, saved to localStorage)
 
 | Key | What it unlocks | Get one |
 |-----|-----------------|---------|
-| **Anthropic** | AI query parsing + financial synthesis (`claude-sonnet-4-6`) | https://console.anthropic.com |
-| **Alpha Vantage** | Quote, 5-year price history, market-data overview | https://www.alphavantage.co/support/#api-key |
-| **Financial Modeling Prep** | Income/balance/cash-flow statements, ratios, estimates, segmentation | https://financialmodelingprep.com/developer/docs |
+| **Financial Modeling Prep** | Company resolution, price, statements, ratios, estimates — most of the dashboard | https://financialmodelingprep.com/developer/docs |
+| **Alpha Vantage** | Adjusted price history + extra market-data fields | https://www.alphavantage.co/support/#api-key |
+| **Anthropic** | AI query parsing + narrative synthesis (`claude-sonnet-4-6`) | https://console.anthropic.com |
 
-Without an Anthropic key the app falls back to a built-in deterministic data mapping
-(no AI). At least one of **FMP or Alpha Vantage** is required to resolve the company and
-fetch financials (see the CORS note below).
+Locally, at least an **FMP** (or Alpha Vantage) key is required to resolve a company and
+fetch financials. Anthropic is always optional.
 
 ## Data sources & the browser CORS reality
 
-This is a 100% client-side app, so every data source must allow cross-origin requests.
-Tested behavior from the browser:
+The proxy exists because a 100% client-side app can only use sources that allow
+cross-origin browser requests — and the best free ones don't. Tested behavior:
 
 - ✅ `data.sec.gov/submissions/CIK*.json` — **CORS-enabled.** Used for company metadata,
   recent filings, IR links, fiscal year.
@@ -45,11 +59,14 @@ Tested behavior from the browser:
 - ❌ `www.sec.gov/files/company_tickers.json` and `efts.sec.gov/...` — **CORS-blocked.**
   So the **CIK is resolved from FMP `profile` or Alpha Vantage `OVERVIEW`** (both carry a
   `cik`/`CIK` field and are CORS-friendly), not from the SEC ticker map.
-- ✅ Alpha Vantage, Financial Modeling Prep — CORS-friendly.
-- ✅ Anthropic Messages API — called with `anthropic-dangerous-direct-browser-access: true`.
+- ✅ Alpha Vantage, Financial Modeling Prep — CORS-friendly (still need keys).
+- ✅ Anthropic Messages API — works from the browser with `anthropic-dangerous-direct-browser-access: true`.
 
-Consequence: a name → ticker → CIK lookup needs an FMP or Alpha Vantage key. Once the CIK
-is known, the SEC submissions endpoint fills in filings and IR data.
+Consequence: there is no way to pull comprehensive live financial data into a purely
+client-side page without *someone's* key. The serverless proxy solves this by holding the
+key server-side; the client calls it same-origin (`/api/proxy`), so there are no CORS issues
+and users need nothing. The proxy also fronts `data.sec.gov` with a proper `User-Agent`,
+which additionally unblocks the SEC XBRL endpoints that the browser can't reach directly.
 
 ## Search modes
 
