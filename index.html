@@ -282,13 +282,22 @@ async function getTickerMap() {
 }
 function pad10(cik) { return String(cik).padStart(10, '0'); }
 
+// Prefer a primary US listing from FMP search results (avoids foreign dual-listings).
+function pickUSsymbol(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const us = arr.find(x => ['NASDAQ','NYSE','AMEX','NYSEAMERICAN'].includes(String(x.exchange||'').toUpperCase()) || x.currency === 'USD');
+  const pick = us || arr[0];
+  return pick && pick.symbol ? pick.symbol.toUpperCase() : null;
+}
 // Resolve a company name to a ticker via FMP search / AV symbol search (proxy or direct).
 async function resolveTicker(name, keys) {
   if (proxyHas('fmp') || keys.fmp) {
-    try {
-      const j = await providerJSON('fmp', 'api/v3/search?query='+encodeURIComponent(name)+'&limit=1', keys.fmp);
-      if (Array.isArray(j) && j[0] && j[0].symbol) return j[0].symbol.toUpperCase();
-    } catch (e) {}
+    for (const ep of ['stable/search-symbol?query=', 'stable/search-name?query=']) {
+      try {
+        const j = await providerJSON('fmp', ep+encodeURIComponent(name)+'&limit=20', keys.fmp);
+        const sym = pickUSsymbol(j); if (sym) return sym;
+      } catch (e) {}
+    }
   }
   if (proxyHas('av') || keys.alphavantage) {
     try {
@@ -397,35 +406,35 @@ async function fetchAlphaVantage(ticker, key) {
   return out;
 }
 
-/* ============================ FMP ============================ */
+/* ============================ FMP (stable API) ============================ */
+// FMP retired the /api/v3/ endpoints on 2025-08-31; new keys use the /stable/ API
+// (query-param style, e.g. stable/profile?symbol=AAPL).
 async function fmpGet(path, key) {
-  const j = await providerJSON('fmp', 'api/v3/'+path, key);
+  const j = await providerJSON('fmp', 'stable/'+path, key);
   if (j && j['Error Message']) throw new Error(j['Error Message']);
   return j;
 }
-function fmpPriceHistory(hist) {
-  // Downsample daily EOD history to ~monthly (last trading day per month), last 60 months.
-  if (!hist || !Array.isArray(hist.historical)) return [];
+function fmpPriceHistory(rows) {
+  // stable historical-price-eod/light → [{symbol,date,price,volume}] (descending).
+  if (!Array.isArray(rows)) return [];
   const byMonth = {};
-  hist.historical.forEach(d => { const m = (d.date||'').slice(0,7); if (m && (!byMonth[m] || d.date > byMonth[m].date)) byMonth[m] = d; });
-  return Object.keys(byMonth).sort().slice(-60).map(m => ({ date: byMonth[m].date, price: num(byMonth[m].adjClose ?? byMonth[m].close) })).filter(x => x.price !== null);
+  rows.forEach(d => { const m = (d.date||'').slice(0,7); if (m && (!byMonth[m] || d.date > byMonth[m].date)) byMonth[m] = d; });
+  return Object.keys(byMonth).sort().slice(-60).map(m => ({ date: byMonth[m].date, price: num(byMonth[m].price ?? byMonth[m].adjClose ?? byMonth[m].close) })).filter(x => x.price !== null);
 }
 async function fetchFMP(ticker, key) {
-  const out = { profile:[], quote:[], income:[], balance:[], cashflow:[], ratios:[], earnings:[], estimates:[], segProduct:null, segGeo:null, shares:[], calendar:[], priceHistory:[], error:null };
+  const out = { profile:[], quote:[], income:[], balance:[], cashflow:[], ratios:[], keyMetrics:[], earnings:[], estimates:[], segProduct:null, segGeo:null, priceHistory:[], error:null };
   if ((!proxyHas('fmp') && !key) || !ticker) { out.error = 'fmp unavailable'; return out; }
-  const from = new Date(Date.now() - 5*365*864e5).toISOString().slice(0,10);
   const tasks = {
-    profile: 'profile/'+ticker,
-    quote: 'quote/'+ticker,
-    income: 'income-statement/'+ticker+'?limit=5',
-    balance: 'balance-sheet-statement/'+ticker+'?limit=5',
-    cashflow: 'cash-flow-statement/'+ticker+'?limit=5',
-    ratios: 'ratios/'+ticker+'?limit=5',
-    earnings: 'earnings-surprises/'+ticker,
-    estimates: 'analyst-estimates/'+ticker+'?limit=4',
-    shares: 'historical-shares-outstanding/'+ticker,
-    calendar: 'historical/earning_calendar/'+ticker+'?limit=4',
-    priceFull: 'historical-price-full/'+ticker+'?serietype=line&from='+from,
+    profile: 'profile?symbol='+ticker,
+    quote: 'quote?symbol='+ticker,
+    income: 'income-statement?symbol='+ticker+'&limit=5',
+    balance: 'balance-sheet-statement?symbol='+ticker+'&limit=5',
+    cashflow: 'cash-flow-statement?symbol='+ticker+'&limit=5',
+    ratios: 'ratios?symbol='+ticker+'&limit=5',
+    keyMetrics: 'key-metrics?symbol='+ticker+'&limit=5',
+    earnings: 'earnings?symbol='+ticker+'&limit=16',
+    estimates: 'analyst-estimates?symbol='+ticker+'&period=quarter&limit=8',
+    priceFull: 'historical-price-eod/light?symbol='+ticker,
   };
   const entries = Object.entries(tasks);
   const settled = await Promise.allSettled(entries.map(([_, p]) => fmpGet(p, key)));
@@ -435,10 +444,11 @@ async function fetchFMP(ticker, key) {
     if (k === 'priceFull') out.priceHistory = fmpPriceHistory(s.value);
     else out[k] = s.value;
   });
-  // v4 segmentation (often premium — best effort)
-  try { out.segProduct = await providerJSON('fmp', 'api/v4/revenue-product-segmentation?symbol='+ticker+'&structure=flat', key); } catch(e){}
-  try { out.segGeo = await providerJSON('fmp', 'api/v4/revenue-geographic-segmentation?symbol='+ticker+'&structure=flat', key); } catch(e){}
-  if (settled.every(s => s.status === 'rejected')) out.error = 'FMP unavailable';
+  // revenue segmentation (often premium — best effort)
+  try { out.segProduct = await fmpGet('revenue-product-segmentation?symbol='+ticker, key); } catch(e){}
+  try { out.segGeo = await fmpGet('revenue-geographic-segmentation?symbol='+ticker, key); } catch(e){}
+  // core endpoints are the first 7; if every one rejected, FMP is unusable
+  if (settled.slice(0,7).every(s => s.status === 'rejected')) out.error = 'FMP unavailable';
   return out;
 }
 
@@ -447,9 +457,10 @@ async function fetchTranscript(ticker, key) {
   // FMP earnings-call transcript (often premium). Best-effort, fail silent.
   if (!proxyHas('fmp') && !key) return { available:false, text:null, link:'https://www.fool.com/earnings-call-transcripts/?symbol='+ticker };
   try {
-    const j = await providerJSON('fmp', 'api/v3/earning_call_transcript/'+ticker+'?limit=1', key);
-    if (Array.isArray(j) && j[0] && j[0].content) {
-      return { available:true, date:j[0].date, quarter:'Q'+j[0].quarter+' '+j[0].year, text:String(j[0].content).slice(0, 14000) };
+    const j = await providerJSON('fmp', 'stable/earning-call-transcript?symbol='+ticker+'&limit=1', key);
+    const t = Array.isArray(j) ? j[0] : j;
+    if (t && t.content) {
+      return { available:true, date:t.date, quarter:'Q'+(t.period||t.quarter||'')+' '+(t.year||''), text:String(t.content).slice(0, 14000) };
     }
   } catch (e) {}
   return { available:false, text:null, link:'https://www.fool.com/earnings-call-transcripts/?symbol='+ticker };
@@ -550,9 +561,9 @@ async function fetchCompany(company, keys, onStep) {
     sec: { cik: sec.cik || cik, meta: sec.meta, filings: sec.filings, error: sec.error },
     alphaVantage: { quote: av.quote, overview: av.overview, error: av.error },
     fmp: {
-      profile, quote: fmp.quote, income: fmp.income, balance: fmp.balance, cashflow: fmp.cashflow, ratios: fmp.ratios,
-      earnings: (fmp.earnings||[]).slice(0,8), estimates: fmp.estimates,
-      segProduct: fmp.segProduct, segGeo: fmp.segGeo, shares: fmp.shares, calendar: fmp.calendar, error: fmp.error,
+      profile, quote: fmp.quote, income: fmp.income, balance: fmp.balance, cashflow: fmp.cashflow, ratios: fmp.ratios, keyMetrics: fmp.keyMetrics,
+      earnings: (fmp.earnings||[]).slice(0,16), estimates: fmp.estimates,
+      segProduct: fmp.segProduct, segGeo: fmp.segGeo, error: fmp.error,
     },
     transcript: { available: transcript.available, date: transcript.date, quarter: transcript.quarter, text: transcript.text },
   };
@@ -578,7 +589,7 @@ async function fetchCompany(company, keys, onStep) {
   return { data, raw, sec };
 }
 
-/* ---- Local synthesis fallback (no Anthropic key) — builds from SEC + AV + FMP directly ---- */
+/* ---- Local synthesis fallback (no AI) — maps SEC + FMP (stable API) + AV directly ---- */
 function localSynthesize(raw, priceHistory) {
   const ov = raw.alphaVantage.overview || {};
   const q = raw.alphaVantage.quote || {};
@@ -586,26 +597,36 @@ function localSynthesize(raw, priceHistory) {
   const fq = (raw.fmp.quote && raw.fmp.quote[0]) || {};
   const rangeLo = prof.range ? num(String(prof.range).split('-')[0]) : null;
   const rangeHi = prof.range ? num(String(prof.range).split('-')[1]) : null;
-  const mktCap = num(ov.MarketCapitalization) ?? num(fq.marketCap) ?? num(prof.mktCap);
-  const latestInc = (raw.fmp.income || [])[0] || {};
-  const latestCf = ((raw.fmp.cashflow || [])[0]) || {};
   const inc = raw.fmp.income || [];
   const bs = raw.fmp.balance || [];
   const cf = raw.fmp.cashflow || [];
   const ratios = raw.fmp.ratios || [];
+  const kms = raw.fmp.keyMetrics || [];
   const meta = raw.sec.meta || {};
   const cik = raw.sec.cik;
-  const rev = [...inc].reverse();
-  const revenueHistory = rev.map((r,i,arr) => ({ year:String(r.calendarYear), revenue:num(r.revenue), yoyGrowth: i>0 && num(arr[i-1].revenue) ? ((num(r.revenue)-num(arr[i-1].revenue))/num(arr[i-1].revenue))*100 : null, source:'FMP' }));
-  const profitabilityHistory = rev.map(r => ({ year:String(r.calendarYear), grossProfit:num(r.grossProfit), grossMargin: num(r.revenue)?num(r.grossProfit)/num(r.revenue)*100:null, operatingIncome:num(r.operatingIncome), operatingMargin: num(r.revenue)?num(r.operatingIncome)/num(r.revenue)*100:null, netIncome:num(r.netIncome), netMargin: num(r.revenue)?num(r.netIncome)/num(r.revenue)*100:null, eps:num(r.eps), epsDiluted:num(r.epsdiluted), source:'FMP' }));
-  const cashFlowHistory = [...cf].reverse().map(c => ({ year:String(c.calendarYear), operatingCashFlow:num(c.operatingCashFlow), capitalExpenditures:num(c.capitalExpenditure), freeCashFlow:num(c.freeCashFlow), fcfFormula:'FCF = OCF − CapEx', source:'FMP' }));
+  const fyOf = (r) => String((r && (r.fiscalYear || (r.date||'').slice(0,4))) || '');
+  const pct = (x) => num(x)!=null ? num(x)*100 : null;
+  const latestInc = inc[0] || {};
+  const latestCf = cf[0] || {};
   const latestBs = bs[0] || {};
   const latestRatio = ratios[0] || {};
+  const km = kms[0] || {};
+  const mktCap = num(ov.MarketCapitalization) ?? num(fq.marketCap) ?? num(prof.marketCap) ?? num(km.marketCap);
   const totalDebt = num(latestBs.totalDebt);
   const cash = num(latestBs.cashAndCashEquivalents);
+  const cfByFy = {}; cf.forEach(c => { cfByFy[fyOf(c)] = c; });
+  const rev = [...inc].reverse(); // ascending by year
+  const revenueHistory = rev.map((r,i,arr) => ({ year:fyOf(r), revenue:num(r.revenue), yoyGrowth: i>0 && num(arr[i-1].revenue) ? ((num(r.revenue)-num(arr[i-1].revenue))/num(arr[i-1].revenue))*100 : null, source:'FMP' }));
+  const profitabilityHistory = rev.map(r => ({ year:fyOf(r), grossProfit:num(r.grossProfit), grossMargin: num(r.revenue)?num(r.grossProfit)/num(r.revenue)*100:null, operatingIncome:num(r.operatingIncome), operatingMargin: num(r.revenue)?num(r.operatingIncome)/num(r.revenue)*100:null, netIncome:num(r.netIncome), netMargin: num(r.revenue)?num(r.netIncome)/num(r.revenue)*100:null, eps:num(r.eps), epsDiluted:num(r.epsDiluted), source:'FMP' }));
+  const cashFlowHistory = [...cf].reverse().map(c => ({ year:fyOf(c), operatingCashFlow:num(c.operatingCashFlow), capitalExpenditures:num(c.capitalExpenditure), freeCashFlow:num(c.freeCashFlow), fcfFormula:'FCF = OCF − CapEx', source:'FMP' }));
+  // stable earnings: newest first; split realized vs upcoming
+  const earningsAll = (raw.fmp.earnings || []).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  const pastEarnings = earningsAll.filter(e => num(e.epsActual)!=null);
+  const today = new Date().toISOString().slice(0,10);
+  const upcoming = earningsAll.filter(e => num(e.epsActual)==null && e.date && e.date>=today).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   return {
     companyProfile: {
-      legalName: meta.name || ov.Name || prof.companyName || raw.query.name, ticker: raw.query.ticker, exchange: ov.Exchange || prof.exchangeShortName || (meta.exchanges&&meta.exchanges[0]) || raw.query.exchange,
+      legalName: meta.name || ov.Name || prof.companyName || raw.query.name, ticker: raw.query.ticker, exchange: ov.Exchange || prof.exchange || (meta.exchanges&&meta.exchanges[0]) || raw.query.exchange,
       sector: ov.Sector || prof.sector || '', industry: ov.Industry || prof.industry || meta.sicDescription || '', founded:null, ipoDate: ov.IPODate || prof.ipoDate || null, ipoPrice:null,
       headquarters: ov.Address || [prof.city, prof.state, prof.country].filter(Boolean).join(', ') || '', employees: num(ov.FullTimeEmployees) ?? num(prof.fullTimeEmployees), fiscalYearEnd: ov.FiscalYearEnd || meta.fiscalYearEnd || '',
       description: ov.Description || prof.description || '', businessModel:'', revenueStreams:[], geographicPresence:'', recentStrategicPriorities:'', topRiskFactors:[],
@@ -613,38 +634,38 @@ function localSynthesize(raw, priceHistory) {
       secEdgarUrl: cik ? 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK='+cik : '',
     },
     currentMarketData: {
-      price: num(fq.price) ?? num(q['05. price']) ?? num(prof.price) ?? num(ov['52WeekHigh']), priceDate: q['07. latest trading day'] || (fq.timestamp?new Date(num(fq.timestamp)*1000).toISOString().slice(0,10):'') || '', marketCap: mktCap,
-      enterpriseValue: null, sharesOutstanding: num(ov.SharesOutstanding) ?? num(fq.sharesOutstanding) ?? (mktCap&&num(fq.price)?Math.round(mktCap/num(fq.price)):null), sharesFloat: num(ov.SharesFloat),
-      week52High: num(ov['52WeekHigh']) ?? num(fq.yearHigh) ?? rangeHi, week52Low: num(ov['52WeekLow']) ?? num(fq.yearLow) ?? rangeLo, beta: num(ov.Beta) ?? num(prof.beta), dividendYield: num(ov.DividendYield)!=null?num(ov.DividendYield)*100:(num(prof.lastDiv)&&num(prof.price)?num(prof.lastDiv)/num(prof.price)*100:null),
-      dividendPerShare: num(ov.DividendPerShare) ?? num(prof.lastDiv), ma50: num(ov['50DayMovingAverage']) ?? num(fq.priceAvg50), ma200: num(ov['200DayMovingAverage']) ?? num(fq.priceAvg200),
-      shortInterest: num(ov.SharesShort), shortRatio: num(ov.ShortRatio), volume: num(q['06. volume']) ?? num(fq.volume) ?? num(prof.volAvg),
-      nextEarningsDate: (raw.fmp.calendar&&raw.fmp.calendar[0]&&raw.fmp.calendar[0].date) || null,
+      price: num(fq.price) ?? num(q['05. price']) ?? num(prof.price), priceDate: q['07. latest trading day'] || (fq.timestamp?new Date(num(fq.timestamp)*1000).toISOString().slice(0,10):'') || '', marketCap: mktCap,
+      enterpriseValue: num(km.enterpriseValue), sharesOutstanding: num(ov.SharesOutstanding) ?? num(latestInc.weightedAverageShsOut) ?? (mktCap&&num(fq.price)?Math.round(mktCap/num(fq.price)):null), sharesFloat: num(ov.SharesFloat),
+      week52High: num(ov['52WeekHigh']) ?? num(fq.yearHigh) ?? rangeHi, week52Low: num(ov['52WeekLow']) ?? num(fq.yearLow) ?? rangeLo, beta: num(ov.Beta) ?? num(prof.beta), dividendYield: num(ov.DividendYield)!=null?num(ov.DividendYield)*100:(pct(latestRatio.dividendYield) ?? (num(prof.lastDividend)&&num(prof.price)?num(prof.lastDividend)/num(prof.price)*100:null)),
+      dividendPerShare: num(ov.DividendPerShare) ?? num(latestRatio.dividendPerShare) ?? num(prof.lastDividend), ma50: num(ov['50DayMovingAverage']) ?? num(fq.priceAvg50), ma200: num(ov['200DayMovingAverage']) ?? num(fq.priceAvg200),
+      shortInterest: num(ov.SharesShort), shortRatio: num(ov.ShortRatio), volume: num(q['06. volume']) ?? num(fq.volume) ?? num(prof.averageVolume),
+      nextEarningsDate: (upcoming[0] && upcoming[0].date) || null,
     },
     valuationMetrics: {
-      peRatioTTM: num(ov.PERatio) ?? num(fq.pe) ?? num(latestRatio.priceEarningsRatio), pegRatio: num(ov.PEGRatio) ?? num(latestRatio.priceEarningsToGrowthRatio), priceToBook: num(ov.PriceToBookRatio) ?? num(latestRatio.priceToBookRatio), priceToSales: num(ov.PriceToSalesRatioTTM) ?? num(latestRatio.priceToSalesRatio),
-      priceToFreeCashFlow: num(latestRatio.priceToFreeCashFlowsRatio), evToEbitda: num(ov.EVToEBITDA) ?? num(latestRatio.enterpriseValueMultiple), evToRevenue: num(ov.EVToRevenue),
-      ebitdaMargin: num(latestRatio.ebitdaratio)!=null?num(latestRatio.ebitdaratio)*100:(num(latestInc.ebitda)&&num(latestInc.revenue)?num(latestInc.ebitda)/num(latestInc.revenue)*100:null), sourceNote:'FMP quote/ratios'+(ov.Symbol?' + Alpha Vantage':''),
+      peRatioTTM: num(ov.PERatio) ?? num(latestRatio.priceToEarningsRatio), pegRatio: num(ov.PEGRatio) ?? num(latestRatio.priceToEarningsGrowthRatio), priceToBook: num(ov.PriceToBookRatio) ?? num(latestRatio.priceToBookRatio), priceToSales: num(ov.PriceToSalesRatioTTM) ?? num(latestRatio.priceToSalesRatio),
+      priceToFreeCashFlow: num(latestRatio.priceToFreeCashFlowRatio), evToEbitda: num(ov.EVToEBITDA) ?? num(km.evToEBITDA) ?? num(latestRatio.enterpriseValueMultiple), evToRevenue: num(ov.EVToRevenue) ?? num(km.evToSales),
+      ebitdaMargin: pct(latestRatio.ebitdaMargin) ?? (num(latestInc.ebitda)&&num(latestInc.revenue)?num(latestInc.ebitda)/num(latestInc.revenue)*100:null), sourceNote:'FMP stable API'+(ov.Symbol?' + Alpha Vantage':''),
     },
     keyCalculatedMetrics: {
       netDebt: { value: totalDebt!=null&&cash!=null? totalDebt-cash:null, totalDebt, cash, formula:'Net Debt = Total Debt − Cash', asOf: latestBs.date||'' },
-      fcfYield: { value: (cashFlowHistory.length&&mktCap)? cashFlowHistory[cashFlowHistory.length-1].freeCashFlow/mktCap*100:null, fcfTTM: cashFlowHistory.length?cashFlowHistory[cashFlowHistory.length-1].freeCashFlow:null, marketCap:mktCap, formula:'FCF Yield = FCF ÷ Market Cap', asOf: latestCf.date||'' },
+      fcfYield: { value: pct(km.freeCashFlowYield) ?? ((cashFlowHistory.length&&mktCap)? cashFlowHistory[cashFlowHistory.length-1].freeCashFlow/mktCap*100:null), fcfTTM: cashFlowHistory.length?cashFlowHistory[cashFlowHistory.length-1].freeCashFlow:null, marketCap:mktCap, formula:'FCF Yield = FCF ÷ Market Cap', asOf: latestCf.date||'' },
       cashConversionRate: { value: (num(latestCf.operatingCashFlow)&&num(latestInc.netIncome))? num(latestCf.operatingCashFlow)/num(latestInc.netIncome):null, operatingCashFlow:num(latestCf.operatingCashFlow), netIncome:num(latestInc.netIncome), formula:'Cash Conversion = OCF ÷ Net Income', note:'A ratio above 1.0 means the company converts more than $1 of cash per $1 of accounting profit', asOf: latestCf.date||'' },
       revenueCAGR5yr: revenueHistory.length>=2? (function(){const s=revenueHistory[0],e=revenueHistory[revenueHistory.length-1],n=revenueHistory.length-1;return {value: s.revenue&&e.revenue?(Math.pow(e.revenue/s.revenue,1/n)-1)*100:null, startYear:s.year, endYear:e.year, startRevenue:s.revenue, endRevenue:e.revenue, formula:'CAGR = (End ÷ Start)^(1/'+n+') − 1'};})() : {value:null,startYear:'',endYear:'',startRevenue:null,endRevenue:null,formula:''},
       capexAsPercentRevenueTTM: { value: (num(latestCf.capitalExpenditure)&&num(latestInc.revenue))? Math.abs(num(latestCf.capitalExpenditure))/num(latestInc.revenue)*100:null, capex:num(latestCf.capitalExpenditure)!=null?Math.abs(num(latestCf.capitalExpenditure)):null, revenue:num(latestInc.revenue), formula:'CapEx % Revenue = CapEx ÷ Revenue' },
-      effectiveTaxRateMostRecent: { value: num(latestRatio.effectiveTaxRate)!=null?num(latestRatio.effectiveTaxRate)*100:(num(latestInc.incomeTaxExpense)&&num(latestInc.incomeBeforeTax)?num(latestInc.incomeTaxExpense)/num(latestInc.incomeBeforeTax)*100:null), taxExpense:num(latestInc.incomeTaxExpense), pretaxIncome:num(latestInc.incomeBeforeTax), year:String((inc[0]||{}).calendarYear||''), formula:'Effective Tax Rate = Tax Expense ÷ Pre-Tax Income' },
+      effectiveTaxRateMostRecent: { value: pct(latestRatio.effectiveTaxRate) ?? (num(latestInc.incomeTaxExpense)&&num(latestInc.incomeBeforeTax)?num(latestInc.incomeTaxExpense)/num(latestInc.incomeBeforeTax)*100:null), taxExpense:num(latestInc.incomeTaxExpense), pretaxIncome:num(latestInc.incomeBeforeTax), year:fyOf(latestInc), formula:'Effective Tax Rate = Tax Expense ÷ Pre-Tax Income' },
     },
     revenueHistory, profitabilityHistory,
-    ebitdaHistory: rev.map(r => ({ year:String(r.calendarYear), ebitda:num(r.ebitda), ebitdaMargin: num(r.revenue)&&num(r.ebitda)?num(r.ebitda)/num(r.revenue)*100:null, depreciationAndAmortization:num(r.depreciationAndAmortization), operatingIncome:num(r.operatingIncome), formula:'EBITDA = Operating Income + D&A', source:'FMP' })),
-    operatingLeverageHistory: rev.map((r,i,arr) => ({ year:String(r.calendarYear), revenueGrowth: i>0&&num(arr[i-1].revenue)?((num(r.revenue)-num(arr[i-1].revenue))/num(arr[i-1].revenue))*100:null, operatingIncomeGrowth: i>0&&num(arr[i-1].operatingIncome)?((num(r.operatingIncome)-num(arr[i-1].operatingIncome))/Math.abs(num(arr[i-1].operatingIncome)))*100:null })),
-    balanceSheetSnapshot: { asOf: latestBs.date||'', totalAssets:num(latestBs.totalAssets), totalLiabilities:num(latestBs.totalLiabilities), shareholderEquity:num(latestBs.totalStockholdersEquity), cashAndEquivalents:cash, longTermDebt:num(latestBs.longTermDebt), shortTermDebt:num(latestBs.shortTermDebt), totalDebt, debtToEquity:num(latestRatio.debtEquityRatio), currentRatio:num(latestRatio.currentRatio), quickRatio:num(latestRatio.quickRatio), source:'FMP' },
-    debtMaturity: { asOf: latestBs.date||'', shortTermDebt:num(latestBs.shortTermDebt), longTermDebt:num(latestBs.longTermDebt), totalDebt, shortTermAsPercentOfTotal: totalDebt&&num(latestBs.shortTermDebt)!=null?num(latestBs.shortTermDebt)/totalDebt*100:null, interestExpense:num((inc[0]||{}).interestExpense), impliedAverageInterestRate: totalDebt&&num((inc[0]||{}).interestExpense)?num((inc[0]||{}).interestExpense)/totalDebt*100:null, interestRateFormula:'Interest Expense ÷ Total Debt', source:'FMP' },
+    ebitdaHistory: rev.map(r => ({ year:fyOf(r), ebitda:num(r.ebitda), ebitdaMargin: num(r.revenue)&&num(r.ebitda)?num(r.ebitda)/num(r.revenue)*100:null, depreciationAndAmortization:num(r.depreciationAndAmortization), operatingIncome:num(r.operatingIncome), formula:'EBITDA = Operating Income + D&A', source:'FMP' })),
+    operatingLeverageHistory: rev.map((r,i,arr) => ({ year:fyOf(r), revenueGrowth: i>0&&num(arr[i-1].revenue)?((num(r.revenue)-num(arr[i-1].revenue))/num(arr[i-1].revenue))*100:null, operatingIncomeGrowth: i>0&&num(arr[i-1].operatingIncome)?((num(r.operatingIncome)-num(arr[i-1].operatingIncome))/Math.abs(num(arr[i-1].operatingIncome)))*100:null })),
+    balanceSheetSnapshot: { asOf: latestBs.date||'', totalAssets:num(latestBs.totalAssets), totalLiabilities:num(latestBs.totalLiabilities), shareholderEquity:num(latestBs.totalStockholdersEquity), cashAndEquivalents:cash, longTermDebt:num(latestBs.longTermDebt), shortTermDebt:num(latestBs.shortTermDebt), totalDebt, debtToEquity:num(latestRatio.debtToEquityRatio), currentRatio:num(latestRatio.currentRatio), quickRatio:num(latestRatio.quickRatio), source:'FMP' },
+    debtMaturity: { asOf: latestBs.date||'', shortTermDebt:num(latestBs.shortTermDebt), longTermDebt:num(latestBs.longTermDebt), totalDebt, shortTermAsPercentOfTotal: totalDebt&&num(latestBs.shortTermDebt)!=null?num(latestBs.shortTermDebt)/totalDebt*100:null, interestExpense:num(latestInc.interestExpense), impliedAverageInterestRate: totalDebt&&num(latestInc.interestExpense)?num(latestInc.interestExpense)/totalDebt*100:null, interestRateFormula:'Interest Expense ÷ Total Debt', source:'FMP' },
     cashFlowHistory,
-    capexAndRdHistory: rev.map(r => { const cx=Math.abs(num(([...cf].reverse().find(c=>c.calendarYear===r.calendarYear)||{}).capitalExpenditure)||0)||null; return { year:String(r.calendarYear), capex:cx, revenue:num(r.revenue), capexAsPercentRevenue: cx&&num(r.revenue)?cx/num(r.revenue)*100:null, rdExpense:num(r.researchAndDevelopmentExpenses), rdAsPercentRevenue: num(r.revenue)&&num(r.researchAndDevelopmentExpenses)?num(r.researchAndDevelopmentExpenses)/num(r.revenue)*100:null, source:'FMP' }; }),
-    returnMetrics: { asOf: latestBs.date||'', roe:num(latestRatio.returnOnEquity)!=null?num(latestRatio.returnOnEquity)*100:null, roa:num(latestRatio.returnOnAssets)!=null?num(latestRatio.returnOnAssets)*100:null, roic:num(latestRatio.returnOnCapitalEmployed)!=null?num(latestRatio.returnOnCapitalEmployed)*100:null, interestCoverage:num(latestRatio.interestCoverage), effectiveTaxRate:num(latestRatio.effectiveTaxRate)!=null?num(latestRatio.effectiveTaxRate)*100:null, source:'FMP ratios' },
-    sharesHistory: (raw.fmp.shares||[]).slice(0,5).reverse().map(s => ({ year:(s.date||'').slice(0,4), basicSharesOutstanding:num(s.outstandingShares), dilutedSharesOutstanding:null, yoyChangePercent:null, source:'FMP' })),
+    capexAndRdHistory: rev.map(r => { const cx=Math.abs(num((cfByFy[fyOf(r)]||{}).capitalExpenditure)||0)||null; return { year:fyOf(r), capex:cx, revenue:num(r.revenue), capexAsPercentRevenue: cx&&num(r.revenue)?cx/num(r.revenue)*100:null, rdExpense:num(r.researchAndDevelopmentExpenses), rdAsPercentRevenue: num(r.revenue)&&num(r.researchAndDevelopmentExpenses)?num(r.researchAndDevelopmentExpenses)/num(r.revenue)*100:null, source:'FMP' }; }),
+    returnMetrics: { asOf: km.date||latestBs.date||'', roe:pct(km.returnOnEquity), roa:pct(km.returnOnAssets), roic:pct(km.returnOnInvestedCapital) ?? pct(km.returnOnCapitalEmployed), interestCoverage:num(latestRatio.interestCoverageRatio), effectiveTaxRate:pct(latestRatio.effectiveTaxRate), source:'FMP key-metrics/ratios' },
+    sharesHistory: rev.map((r,i,arr) => { const b=num(r.weightedAverageShsOut); const pb=i>0?num(arr[i-1].weightedAverageShsOut):null; return { year:fyOf(r), basicSharesOutstanding:b, dilutedSharesOutstanding:num(r.weightedAverageShsOutDil), yoyChangePercent: b&&pb?((b-pb)/pb)*100:null, source:'FMP' }; }),
     revenueSegmentation: { asOf:'', byProduct: segToArr(raw.fmp.segProduct), byGeography: segToArr(raw.fmp.segGeo), concentrationNote:null, source:'FMP' },
-    earningsHistory: (raw.fmp.earnings||[]).slice(0,8).map(e => ({ quarter:e.date, epsActual:num(e.actualEarningResult), epsEstimated:num(e.estimatedEarning), epsSurprise: num(e.actualEarningResult)!=null&&num(e.estimatedEarning)!=null?num(e.actualEarningResult)-num(e.estimatedEarning):null, revenueActual:null, revenueEstimated:null, revenueSurprise:null, result: num(e.actualEarningResult)>num(e.estimatedEarning)?'beat':num(e.actualEarningResult)<num(e.estimatedEarning)?'missed':'met' })),
-    forwardEstimates: { source:'Financial Modeling Prep analyst consensus', disclaimer:'Third-party analyst consensus estimates only. Not forecasts or recommendations. Frequently revised. Actual results may differ materially.', quarters: (raw.fmp.estimates||[]).slice(0,4).map(e => ({ quarter:e.date, estimatedRevenue:num(e.estimatedRevenueAvg), estimatedEPS:num(e.estimatedEpsAvg), numberOfAnalysts:num(e.numberAnalystEstimatedRevenue) })) },
+    earningsHistory: pastEarnings.slice(0,8).map(e => ({ quarter:e.date, epsActual:num(e.epsActual), epsEstimated:num(e.epsEstimated), epsSurprise: num(e.epsActual)!=null&&num(e.epsEstimated)!=null?num(e.epsActual)-num(e.epsEstimated):null, revenueActual:num(e.revenueActual), revenueEstimated:num(e.revenueEstimated), revenueSurprise: num(e.revenueActual)!=null&&num(e.revenueEstimated)!=null?num(e.revenueActual)-num(e.revenueEstimated):null, result: num(e.epsEstimated)==null?'no_estimate':num(e.epsActual)>num(e.epsEstimated)?'beat':num(e.epsActual)<num(e.epsEstimated)?'missed':'met' })),
+    forwardEstimates: { source:'Financial Modeling Prep analyst consensus', disclaimer:'Third-party analyst consensus estimates only. Not forecasts or recommendations. Frequently revised. Actual results may differ materially.', quarters: (function(){ const all=raw.fmp.estimates||[]; const fut=all.filter(e=>e.date>=today).sort((a,b)=>String(a.date).localeCompare(String(b.date))); const use=(fut.length?fut:all.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)))).slice(0,4); return use.map(e => ({ quarter:e.date, estimatedRevenue:num(e.revenueAvg), estimatedEPS:num(e.epsAvg), numberOfAnalysts:num(e.numAnalystsRevenue) ?? num(e.numAnalystsEps) })); })() },
     earningsCallSummary: { mostRecentCallDate:null, quarter:null, managementGuidance:[], keyThemesDiscussed:[], analystQuestionsTopics:[], transcriptSource:null, available:false },
     keyEvents: (raw.sec.filings||[]).slice(0,12).map(f => ({ date:f.date, eventType: f.type==='8-K'?'filing_8K':f.type==='10-K'?'earnings':'filing_8K', title:f.type+' filed', description:f.description, source:'SEC EDGAR', sourceUrl:f.url, materialityFlag: f.type==='10-K'?'high':f.type==='8-K'?'medium':'low' })),
     recentFilings: (raw.sec.filings||[]).slice(0,10),
@@ -655,12 +676,15 @@ function localSynthesize(raw, priceHistory) {
 }
 function segToArr(seg) {
   if (!seg || !Array.isArray(seg) || !seg.length) return [];
+  const META = new Set(['symbol','date','fiscalYear','period','reportedCurrency','cik']);
   const latest = seg[0];
-  const key = Object.keys(latest).find(k => k !== 'date' && typeof latest[k] === 'object') || Object.keys(latest)[1];
-  const obj = latest[key] || latest;
-  const entries = Object.entries(obj).filter(([k,v]) => typeof v === 'number');
-  const total = entries.reduce((s,[,v]) => s+v, 0);
-  return entries.map(([k,v]) => ({ segment:k, region:k, revenue:v, percentOfTotal: total? v/total*100:null }));
+  // stable API nests the segments under a sub-object (e.g. {data:{...}}); fall back to the row itself
+  const nestedKey = Object.keys(latest).find(k => !META.has(k) && latest[k] && typeof latest[k] === 'object');
+  const obj = nestedKey ? latest[nestedKey] : latest;
+  const entries = Object.entries(obj).filter(([k,v]) => !META.has(k) && typeof v === 'number');
+  const total = entries.reduce((s,[,v]) => s + Math.abs(v), 0);
+  return entries.map(([k,v]) => ({ segment:k, region:k, revenue:v, percentOfTotal: total? v/total*100:null }))
+    .sort((a,b) => b.revenue - a.revenue);
 }
 
 /* ============================ UI PRIMITIVES ============================ */
